@@ -6,33 +6,33 @@ import logging_mp
 logger_mp = logging_mp.getLogger(__name__)
 
 class HandType(Enum):
-    INSPIRE_HAND = "/home/breeze/Desktop/workplace/Humanoid/xr_teleoperate/assets/inspire_hand/inspire_hand.yml"
-    INSPIRE_HAND_Unit_Test = "/home/breeze/Desktop/workplace/Humanoid/xr_teleoperate/assets/inspire_hand/inspire_hand.yml"
-    UNITREE_DEX3 = "/home/breeze/Desktop/workplace/Humanoid/xr_teleoperate/assets/unitree_hand/unitree_dex3.yml"
-    UNITREE_DEX3_Unit_Test = "/home/breeze/Desktop/workplace/Humanoid/xr_teleoperate/assets/unitree_hand/unitree_dex3.yml"
-    BRAINCO_HAND = "/home/breeze/Desktop/workplace/Humanoid/xr_teleoperate/assets/brainco_hand/brainco.yml"
-    BRAINCO_HAND_Unit_Test = "/home/breeze/Desktop/workplace/Humanoid/xr_teleoperate/assets/brainco_hand/brainco.yml"
-    CASIA_HAND = "/home/breeze/Desktop/workplace/Humanoid/xr_teleoperate/assets/casia_hand/casia.yml"
-    CASIA_HAND_Unit_Test = "/home/breeze/Desktop/workplace/Humanoid/xr_teleoperate/assets/casia_hand/casia.yml"
+    INSPIRE_HAND = "./assets/inspire_hand/inspire_hand.yml"
+    INSPIRE_HAND_Unit_Test = "./assets/inspire_hand/inspire_hand.yml"
+    UNITREE_DEX3 = "./assets/unitree_hand/unitree_dex3.yml"
+    UNITREE_DEX3_Unit_Test = "./assets/unitree_hand/unitree_dex3.yml"
+    BRAINCO_HAND = "./assets/brainco_hand/brainco.yml"
+    BRAINCO_HAND_Unit_Test = "./assets/brainco_hand/brainco.yml"
+    CASIA_HAND = "./assets/casia_hand/casia.yml"
+    CASIA_HAND_Unit_Test = "./assets/casia_hand/casia.yml"
 
 class HandRetargeting:
     def __init__(self, hand_type: HandType):
         if hand_type == HandType.UNITREE_DEX3:
-            RetargetingConfig.set_default_urdf_dir('/home/breeze/Desktop/workplace/Humanoid/xr_teleoperate/assets')
+            RetargetingConfig.set_default_urdf_dir('./assets')
         elif hand_type == HandType.UNITREE_DEX3_Unit_Test:
-            RetargetingConfig.set_default_urdf_dir('/home/breeze/Desktop/workplace/Humanoid/xr_teleoperate/assets')
+            RetargetingConfig.set_default_urdf_dir('./assets')
         elif hand_type == HandType.INSPIRE_HAND:
-            RetargetingConfig.set_default_urdf_dir('/home/breeze/Desktop/workplace/Humanoid/xr_teleoperate/assets')
+            RetargetingConfig.set_default_urdf_dir('./assets')
         elif hand_type == HandType.INSPIRE_HAND_Unit_Test:
-            RetargetingConfig.set_default_urdf_dir('/home/breeze/Desktop/workplace/Humanoid/xr_teleoperate/assets')
+            RetargetingConfig.set_default_urdf_dir('./assets')
         elif hand_type == HandType.BRAINCO_HAND:
-            RetargetingConfig.set_default_urdf_dir('/home/breeze/Desktop/workplace/Humanoid/xr_teleoperate/assets')
+            RetargetingConfig.set_default_urdf_dir('./assets')
         elif hand_type == HandType.BRAINCO_HAND_Unit_Test:
-            RetargetingConfig.set_default_urdf_dir('/home/breeze/Desktop/workplace/Humanoid/xr_teleoperate/assets')
+            RetargetingConfig.set_default_urdf_dir('./assets')
         elif hand_type == HandType.CASIA_HAND:
-            RetargetingConfig.set_default_urdf_dir('/home/breeze/Desktop/workplace/Humanoid/xr_teleoperate/assets')
+            RetargetingConfig.set_default_urdf_dir('./assets')
         elif hand_type == HandType.CASIA_HAND_Unit_Test:
-            RetargetingConfig.set_default_urdf_dir('/home/breeze/Desktop/workplace/Humanoid/xr_teleoperate/assets')
+            RetargetingConfig.set_default_urdf_dir('./assets')
 
         config_file_path = Path(hand_type.value)
 
