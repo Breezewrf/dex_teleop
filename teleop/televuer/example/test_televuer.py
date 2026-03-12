@@ -32,7 +32,7 @@ def run_test_TeleVuer():
     #               webrtc=camera_config['head_camera']['enable_webrtc'],
     #               webrtc_url=f"https://192.168.123.164:{camera_config['head_camera']['webrtc_port']}/offer"
     #               )
-    # pure televuer 
+    # pure televuer
     tv = TeleVuer(use_hand_tracking=use_hand_track, 
                   binocular=True, 
                   img_shape=(480, 1280), 
