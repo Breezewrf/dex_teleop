@@ -42,11 +42,22 @@ uv run example/test_tv_wrapper.py
 
 ## Sim2Sim
 ```sh
-uv run sim2sim/mujoco_receiver.py --xml-path assets/casia_hand/CASIAHAND-M-Left.xml
+# Sim of left hand
+uv run sim2sim/mujoco_receiver.py --xml-path assets/casia_hand_M/casia_left_hand.xml --zmq_port 5560
 
+# Sim of right hand
+uv run sim2sim/mujoco_receiver.py --xml-path assets/casia_hand_M/casia_right_hand.xml --zmq_port 5561
+
+# Teleop
 uv run teleop/robot_control/robot_hand_casia_v2.py
 
 ```
+
+Make sure left hand in the view
+
+✅ Left only → left works
+✅ Left + Right → both work
+❌ Right only → nothing works
 
 ## Sim2Real
 ```sh

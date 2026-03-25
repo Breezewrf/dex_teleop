@@ -1,0 +1,44 @@
+left:
+  type: DexPilot # or vector
+  urdf_path: /home/breeze/Desktop/workplace/Humanoid/dex_teleop/assets/casia_hand_M/casia_left_hand.urdf
+
+  # Target refers to the retargeting target, which is the robot hand
+  target_joint_names: 
+    ['left_index_proximal', 'left_index_intermediate', 'left_index_distal',
+                       'left_pinky_proximal', 'left_pinky_intermediate', 'left_pinky_distal',
+                       'left_middle_proximal', 'left_middle_intermediate', 'left_middle_distal',
+                       'left_ring_proximal', 'left_ring_intermediate', 'left_ring_distal',
+                       'left_thumb_proximal', 'left_thumb_intermediate']
+
+  # for DexPilot type
+  wrist_link_name: "left_base_link"
+  finger_tip_link_names: [ "left_thumb_tip_head", "left_index_tip_head", "left_middle_tip_head", "left_ring_tip_head", "left_pinky_tip_head"]
+
+  # Scaling factor for vector retargeting only
+  # For example, Allegro is 1.6 times larger than normal human hand, then this scaling factor should be 1.6
+  scaling_factor: 1.00
+  # A smaller alpha means stronger filtering, i.e. more smooth but also larger latency
+  low_pass_alpha: 0.2
+
+right:
+  type: DexPilot # or vector
+  urdf_path: /home/breeze/Desktop/workplace/Humanoid/dex_teleop/assets/casia_hand_M/casia_right_hand.urdf
+
+
+  # Target refers to the retargeting target, which is the robot hand
+  target_joint_names: 
+    ['right_index_proximal', 'right_index_intermediate', 'right_index_distal',
+                       'right_pinky_proximal', 'right_pinky_intermediate', 'right_pinky_distal',
+                       'right_middle_proximal', 'right_middle_intermediate', 'right_middle_distal',
+                       'right_ring_proximal', 'right_ring_intermediate', 'right_ring_distal',
+                       'right_thumb_proximal', 'right_thumb_intermediate']
+
+  # for DexPilot type
+  wrist_link_name: "right_base_link"
+  finger_tip_link_names: [ "right_thumb_tip_head", "right_index_tip_head", "right_middle_tip_head", "right_ring_tip_head", "right_pinky_tip_head"]
+
+  # Scaling factor for vector retargeting only
+  # For example, Allegro is 1.6 times larger than normal human hand, then this scaling factor should be 1.6
+  scaling_factor: 1.00
+  # A smaller alpha means stronger filtering, i.e. more smooth but also larger latency
+  low_pass_alpha: 0.2

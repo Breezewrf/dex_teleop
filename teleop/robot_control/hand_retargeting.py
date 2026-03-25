@@ -12,8 +12,8 @@ class HandType(Enum):
     UNITREE_DEX3_Unit_Test = "./assets/unitree_hand/unitree_dex3.yml"
     BRAINCO_HAND = "./assets/brainco_hand/brainco.yml"
     BRAINCO_HAND_Unit_Test = "./assets/brainco_hand/brainco.yml"
-    CASIA_HAND = "./assets/casia_hand/casia.yml"
-    CASIA_HAND_Unit_Test = "./assets/casia_hand/casia.yml"
+    CASIA_HAND = "./assets/casia_hand/casia_v2.yml"
+    CASIA_HAND_Unit_Test = "./assets/casia_hand/casia_v2.yml"
 
 class HandRetargeting:
     def __init__(self, hand_type: HandType):
@@ -49,7 +49,6 @@ class HandRetargeting:
             self.right_retargeting = right_retargeting_config.build()
 
             self.left_retargeting_joint_names = self.left_retargeting.joint_names
-            # print(f"left_retargeting: {self.left_retargeting}--------------")
             self.right_retargeting_joint_names = self.right_retargeting.joint_names
             self.left_indices = self.left_retargeting.optimizer.target_link_human_indices
             self.right_indices = self.right_retargeting.optimizer.target_link_human_indices
@@ -84,8 +83,19 @@ class HandRetargeting:
                 self.right_dex_retargeting_to_hardware = [ self.right_retargeting_joint_names.index(name) for name in self.right_brainco_api_joint_names]
             elif hand_type == HandType.CASIA_HAND or hand_type == HandType.CASIA_HAND_Unit_Test:
                 # Sim2Sim
-                self.left_casia_api_joint_names  = ['index1', 'index2', 'index3', 'little1', 'little2', 'little3', 'middle1', 'middle2', 'middle3', 'ring1', 'ring2', 'ring3', 'thumb1', 'thumb2']
-                self.right_casia_api_joint_names = ['index1', 'index2', 'index3', 'little1', 'little2', 'little3', 'middle1', 'middle2', 'middle3', 'ring1', 'ring2', 'ring3', 'thumb1', 'thumb2']
+                # self.left_casia_api_joint_names  = ['index1', 'index2', 'index3', 'little1', 'little2', 'little3', 'middle1', 'middle2', 'middle3', 'ring1', 'ring2', 'ring3', 'thumb1', 'thumb2']
+                # self.right_casia_api_joint_names = ['index1', 'index2', 'index3', 'little1', 'little2', 'little3', 'middle1', 'middle2', 'middle3', 'ring1', 'ring2', 'ring3', 'thumb1', 'thumb2']
+
+                self.left_casia_api_joint_names  = ['left_index_proximal', 'left_index_intermediate', 'left_index_distal',
+                       'left_pinky_proximal', 'left_pinky_intermediate', 'left_pinky_distal',
+                       'left_middle_proximal', 'left_middle_intermediate', 'left_middle_distal',
+                       'left_ring_proximal', 'left_ring_intermediate', 'left_ring_distal',
+                       'left_thumb_proximal', 'left_thumb_intermediate']
+                self.right_casia_api_joint_names = ['right_index_proximal', 'right_index_intermediate', 'right_index_distal',
+                       'right_pinky_proximal', 'right_pinky_intermediate', 'right_pinky_distal',
+                       'right_middle_proximal', 'right_middle_intermediate', 'right_middle_distal',
+                       'right_ring_proximal', 'right_ring_intermediate', 'right_ring_distal',
+                       'right_thumb_proximal', 'right_thumb_intermediate']
 
                 # Sim2Real, Do not uncomment following lines, the sim2real retarget has been done in robot_to_real_mapping in Casia_Controller.
                 # self.left_casia_api_joint_names  = ['thumb1', 'thumb2', 'index1', 'middle1', 'ring1', 'little1','index2', 'middle2', 'ring2', 'little2']

@@ -73,9 +73,26 @@ class Casia_Controller:
         left_q_target_real = np.full(CASIA_Num_Motors_Real, 0)
         right_q_target_real = np.full(CASIA_Num_Motors_Real, 0)
 
-        joint_names = ['index1', 'index2', 'index3', 'little1', 'little2', 'little3', 'middle1', 'middle2', 'middle3', 'ring1', 'ring2', 'ring3', 'thumb1', 'thumb2']
-        joint_names_real = ['thumb1', 'thumb2', 'index1', 'middle1', 'ring1', 'little1','index2', 'middle2', 'ring2', 'little2']
-        robot_to_real_mapping = [joint_names.index(name) for name in joint_names_real]
+        # joint_names = ['index1', 'index2', 'index3', 'little1', 'little2', 'little3', 'middle1', 'middle2', 'middle3', 'ring1', 'ring2', 'ring3', 'thumb1', 'thumb2']
+        # joint_names_real = ['thumb1', 'thumb2', 'index1', 'middle1', 'ring1', 'little1','index2', 'middle2', 'ring2', 'little2']
+        left_joint_names = ['left_index_proximal', 'left_index_intermediate', 'left_index_distal',
+                       'left_pinky_proximal', 'left_pinky_intermediate', 'left_pinky_distal',
+                       'left_middle_proximal', 'left_middle_intermediate', 'left_middle_distal',
+                       'left_ring_proximal', 'left_ring_intermediate', 'left_ring_distal',
+                       'left_thumb_proximal', 'left_thumb_intermediate']
+        left_joint_names_real = ['left_thumb_proximal', 'left_thumb_intermediate', 'left_index_proximal', 'left_middle_proximal', 'left_ring_proximal', 'left_pinky_proximal',
+                            'left_index_intermediate', 'left_middle_intermediate', 'left_ring_intermediate', 'left_pinky_intermediate']
+
+        right_joint_names = ['right_index_proximal', 'right_index_intermediate', 'right_index_distal',
+                       'right_pinky_proximal', 'right_pinky_intermediate', 'right_pinky_distal',
+                       'right_middle_proximal', 'right_middle_intermediate', 'right_middle_distal',
+                       'right_ring_proximal', 'right_ring_intermediate', 'right_ring_distal',
+                       'right_thumb_proximal', 'right_thumb_intermediate']
+        right_joint_names_real = ['right_thumb_proximal', 'right_thumb_intermediate', 'right_index_proximal', 'right_middle_proximal', 'right_ring_proximal', 'right_pinky_proximal',
+                            'right_index_intermediate', 'right_middle_intermediate', 'right_ring_intermediate', 'right_pinky_intermediate']
+        
+        left_robot_to_real_mapping = [left_joint_names.index(name) for name in left_joint_names_real]
+        right_robot_to_real_mapping = [right_joint_names.index(name) for name in right_joint_names_real]
 
         context = None
         left_socket = None
@@ -119,8 +136,8 @@ class Casia_Controller:
                     right_q_target = self.hand_retargeting.right_retargeting.retarget(ref_right_value)[self.hand_retargeting.right_dex_retargeting_to_hardware]
                  
                     # Thumb_2 need abs() for sim2real
-                    left_q_target_real = np.abs(left_q_target[robot_to_real_mapping])
-                    right_q_target_real = np.abs(right_q_target[robot_to_real_mapping])
+                    left_q_target_real = np.abs(left_q_target[left_robot_to_real_mapping])
+                    right_q_target_real = np.abs(right_q_target[right_robot_to_real_mapping])
 
                     
                     # Potantial Normalization for sim2real
@@ -151,7 +168,7 @@ class Casia_Controller:
                     data_left = {
                         "timestamp": timestamp,
                         "qpos": left_q_target.tolist(),
-                        "joint_names": joint_names,
+                        "joint_names": left_joint_names,
                         "type": "sim2sim"
                     }
                     left_socket.send(json.dumps(data_left).encode("utf-8"))
@@ -159,7 +176,7 @@ class Casia_Controller:
                     data_right = {
                         "timestamp": timestamp,
                         "qpos": right_q_target.tolist(),
-                        "joint_names": joint_names,
+                        "joint_names": right_joint_names,
                         "type": "sim2sim"
                     }
                     right_socket.send(json.dumps(data_right).encode("utf-8"))
@@ -167,7 +184,7 @@ class Casia_Controller:
                     data_left_real = {
                         "timestamp": timestamp,
                         "qpos": left_q_target_real.tolist(),
-                        "joint_names": joint_names_real,
+                        "joint_names": left_joint_names_real,
                         "type": "sim2real"
                     }
                     left_real_socket.send(json.dumps(data_left_real).encode("utf-8"))
@@ -175,7 +192,7 @@ class Casia_Controller:
                     data_right_real = {
                         "timestamp": timestamp,
                         "qpos": right_q_target_real.tolist(),
-                        "joint_names": joint_names_real,
+                        "joint_names": right_joint_names_real,
                         "type": "sim2real"
                     }
                     right_real_socket.send(json.dumps(data_right_real).encode("utf-8"))

@@ -1,0 +1,95 @@
+<mujoco model="CASIAHAND-M-Right">
+  <compiler angle="radian"/>
+
+  <asset>
+    <mesh name="right_base_link" content_type="model/stl" file="./meshes/right_base_link.STL"/>
+    <mesh name="right_thumb_proximal_link" content_type="model/stl" file="./meshes/right_thumb_proximal_link.STL"/>
+    <mesh name="right_thumb_intermediate_link" content_type="model/stl" file="./meshes/right_thumb_intermediate_link.STL"/>
+    <mesh name="right_index_proximal_link" content_type="model/stl" file="./meshes/right_index_proximal_link.STL"/>
+    <mesh name="right_index_intermediate_link" content_type="model/stl" file="./meshes/right_index_intermediate_link.STL"/>
+    <mesh name="right_index_distal_link" content_type="model/stl" file="./meshes/right_index_distal_link.STL"/>
+    <mesh name="right_middle_proximal_link" content_type="model/stl" file="./meshes/right_middle_proximal_link.STL"/>
+    <mesh name="right_middle_intermediate_link" content_type="model/stl" file="./meshes/right_middle_intermediate_link.STL"/>
+    <mesh name="right_middle_distal_link" content_type="model/stl" file="./meshes/right_middle_distal_link.STL"/>
+    <mesh name="right_ring_proximal_link" content_type="model/stl" file="./meshes/right_ring_proximal_link.STL"/>
+    <mesh name="right_ring_intermediate_link" content_type="model/stl" file="./meshes/right_ring_intermediate_link.STL"/>
+    <mesh name="right_ring_distal_link" content_type="model/stl" file="./meshes/right_ring_distal_link.STL"/>
+    <mesh name="right_pinky_proximal_link" content_type="model/stl" file="./meshes/right_pinky_proximal_link.STL"/>
+    <mesh name="right_pinky_intermediate_link" content_type="model/stl" file="./meshes/right_pinky_intermediate_link.STL"/>
+    <mesh name="right_pinky_distal_link" content_type="model/stl" file="./meshes/right_pinky_distal_link.STL"/>
+  </asset>
+
+  <worldbody>
+    <geom quat="0.000563088 -0.000563088 -0.707107 0.707107" type="mesh" rgba="1 1 1 1" mesh="right_base_link"/>
+    <body name="right_thumb_proximal_link" pos="0.00849751 -0.0214086 0.018144" quat="0.000563088 -0.000563088 -0.707107 0.707107">
+      <inertial pos="0.000552577 -0.0149644 0.00352537" quat="0.523831 0.44078 -0.460191 0.565277" mass="0.00377121" diaginertia="4.04593e-07 3.88514e-07 1.41352e-07"/>
+      <joint name="right_thumb_proximal" pos="0 0 0" axis="0 0 -1" range="0 1.57"/>
+      <geom type="mesh" rgba="1 1 1 1" mesh="right_thumb_proximal_link"/>
+      <body name="right_thumb_intermediate_link" pos="-0.0048 -0.031252 0.0076698">
+        <inertial pos="0.00542004 -0.0298427 0.0038888" quat="0.832698 0.552971 0.0157525 -0.0242584" mass="0.016765" diaginertia="5.76251e-06 5.74264e-06 1.58844e-06"/>
+        <joint name="right_thumb_intermediate" pos="0 0 0" axis="-1 0 0" range="0 1.57"/>
+        <geom type="mesh" rgba="1 1 1 1" mesh="right_thumb_intermediate_link"/>
+      </body>
+    </body>
+    <body name="right_index_proximal_link" pos="0.00427881 -0.103097 0.031233" quat="0.000577635 -0.000548155 -0.688354 0.725374">
+      <inertial pos="0.00127232 0.00208807 0.0132738" quat="0.999852 0.000346355 0.0165625 0.00462127" mass="0.00492229" diaginertia="5.51096e-07 5.28454e-07 2.64969e-07"/>
+      <joint name="right_index_proximal" pos="0 0 0" axis="0 -1 0" range="0 1.57"/>
+      <geom type="mesh" rgba="1 1 1 1" mesh="right_index_proximal_link"/>
+      <body name="right_index_intermediate_link" pos="0 0.0023761 0.03">
+        <inertial pos="0.00235422 0.0110213 -0.0726409" quat="0.949311 -0.312475 0.00425408 -0.0339135" mass="0.0908177" diaginertia="0.00030426 0.000209388 0.00012477"/>
+        <joint name="right_index_intermediate" pos="0 0 0" axis="0 -1 0" range="0 1.57"/>
+        <geom type="mesh" rgba="1 1 1 1" mesh="right_index_intermediate_link"/>
+        <body name="right_index_distal_link" pos="0 0 0.02">
+          <inertial pos="-0.00149754 -0.000369135 0.0125046" quat="0.991559 -0.000293402 0.128925 0.0137619" mass="0.000998983" diaginertia="5.02044e-08 3.99291e-08 2.12571e-08"/>
+          <joint name="right_index_distal" pos="0 0 0" axis="0 -1 0" range="0 0.785"/>
+          <geom type="mesh" rgba="1 1 1 1" mesh="right_index_distal_link"/>
+        </body>
+      </body>
+    </body>
+    <body name="right_middle_proximal_link" pos="0.00427661 -0.104477 0.011722" quat="0.00056798 -0.000558153 -0.700909 0.71325">
+      <inertial pos="0.00235424 -0.00465453 -0.0431944" quat="0.95462 -0.29586 0.0048453 -0.0338341" mass="0.0908177" diaginertia="0.00030426 0.000209388 0.00012477"/>
+      <joint name="right_middle_proximal" pos="0 0 0" axis="0 -1 0" range="0 1.57"/>
+      <geom type="mesh" rgba="1 1 1 1" mesh="right_middle_proximal_link"/>
+      <body name="right_middle_intermediate_link" pos="0 0.003479 0.037">
+        <inertial pos="-3.94396e-07 0.00136206 -9.13323e-08" quat="0.707107 0.707107 0 0" mass="0.000110031" diaginertia="2.19218e-09 2.18237e-09 1.64042e-10"/>
+        <joint name="right_middle_intermediate" pos="0 0 0" axis="0 -1 0" range="0 1.57"/>
+        <geom type="mesh" rgba="1 1 1 1" mesh="right_middle_intermediate_link"/>
+        <body name="right_middle_distal_link" pos="0 -0.000975 0.023">
+          <inertial pos="-0.00149761 -0.000384091 0.0125045" quat="0.991558 -0.000299216 0.128929 0.0137449" mass="0.000998993" diaginertia="5.0206e-08 3.99308e-08 2.12569e-08"/>
+          <joint name="right_middle_distal" pos="0 0 0" axis="0 -1 0" range="0 0.785"/>
+          <geom type="mesh" rgba="1 1 1 1" mesh="right_middle_distal_link"/>
+        </body>
+      </body>
+    </body>
+    <body name="right_ring_proximal_link" pos="0.00427903 -0.102957 -0.0077684" quat="0.000558153 -0.00056798 -0.71325 0.700909">
+      <inertial pos="0.00127232 0.00208808 0.0132738" quat="0.999852 0.000346549 0.0165626 0.00461998" mass="0.00492229" diaginertia="5.51096e-07 5.28454e-07 2.64969e-07"/>
+      <joint name="right_ring_proximal" pos="0 0 0" axis="0 -1 0" range="0 1.57"/>
+      <geom type="mesh" rgba="1 1 1 1" mesh="right_ring_proximal_link"/>
+      <body name="right_ring_intermediate_link" pos="0 0.0023761 0.03">
+        <inertial pos="0.00235422 -0.0250345 -0.0721456" quat="0.959638 -0.279154 0.00543505 -0.0337444" mass="0.0908177" diaginertia="0.00030426 0.000209388 0.00012477"/>
+        <joint name="right_ring_intermediate" pos="0 0 0" axis="0 -1 0" range="0 1.57"/>
+        <geom type="mesh" rgba="1 1 1 1" mesh="right_ring_intermediate_link"/>
+        <body name="right_ring_distal_link" pos="0 0 0.02">
+          <inertial pos="-0.00149758 -0.000369144 0.0125045" quat="0.991558 -0.000297298 0.128929 0.0137578" mass="0.000998989" diaginertia="5.02055e-08 3.99304e-08 2.12569e-08"/>
+          <joint name="right_ring_distal" pos="0 0 0" axis="0 -1 0" range="0 0.785"/>
+          <geom type="mesh" rgba="1 1 1 1" mesh="right_ring_distal_link"/>
+        </body>
+      </body>
+    </body>
+    <body name="right_pinky_proximal_link" pos="0.00429614 -0.092214 -0.02678" quat="0.000548155 -0.000577635 -0.725374 0.688354">
+      <inertial pos="0.00127232 0.00219957 0.0132738" quat="0.999852 0.00018885 0.0165642 0.00461612" mass="0.00492229" diaginertia="5.51096e-07 5.28454e-07 2.64969e-07"/>
+      <joint name="right_pinky_proximal" pos="0 0 0" axis="0 -1 0" range="0 1.57"/>
+      <geom type="mesh" rgba="1 1 1 1" mesh="right_pinky_proximal_link"/>
+      <body name="right_pinky_intermediate_link" pos="0 0.0024929 0.03" quat="1 -0.00015764 0 0">
+        <inertial pos="0.00235422 -0.0431945 -0.063193" quat="0.964405 -0.262212 0.00602845 -0.0336435" mass="0.0908177" diaginertia="0.00030426 0.000209388 0.00012477"/>
+        <joint name="right_pinky_intermediate" pos="0 0 0" axis="0 -1 0" range="0 1.57"/>
+        <geom type="mesh" rgba="1 1 1 1" mesh="right_pinky_intermediate_link"/>
+        <body name="right_pinky_distal_link" pos="0 0 0.02">
+          <inertial pos="-0.0014976 -0.000369148 0.0125045" quat="0.991558 -0.000297025 0.12893 0.013757" mass="0.00099899" diaginertia="5.02056e-08 3.99306e-08 2.12568e-08"/>
+          <joint name="right_pinky_distal" pos="0 0 0" axis="0 -1 0" range="0 0.785"/>
+          <geom type="mesh" rgba="1 1 1 1" mesh="right_pinky_distal_link"/>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>
