@@ -20,6 +20,8 @@ mkdir -p ~/.config/xr_teleoperate/
 cp cert.pem key.pem ~/.config/xr_teleoperate/
 ```
 
+`sudo apt-get install -y libgl1-mesa-glx libglib2.0-0` PyPI 下载的 opencv-python 轮子在运行时需要调用系统的 OpenGL 核心图形库（libGL.so.1）和 C 语言核心库，但由于 Ubuntu 系统（或者 Docker 镜像）默认非常精简，没有内置这些多媒体库，导致 Python 找不到它们
+
 2.  Allow Firewall Access
 ```bash
 sudo ufw allow 8012
@@ -42,8 +44,15 @@ uv run example/test_tv_wrapper.py
 
 ## Sim2Sim
 ```sh
+# Add --zmq-url to target a remote host or a full tcp:// endpoint.
+# For both hands, pass both XMLs as a comma-separated list and use the default
+# paired ports (5560 for left, 5561 for right).
+
 # Sim of left hand
 uv run sim2sim/mujoco_receiver.py --xml-path assets/casia_hand_M/casia_left_hand.xml --zmq_port 5560
+
+# Sim of both hands
+uv run sim2sim/mujoco_receiver.py --xml-path assets/casia_hand_M/casia_left_hand.xml,assets/casia_hand_M/casia_right_hand.xml --zmq_port 5560
 
 # Sim of right hand
 uv run sim2sim/mujoco_receiver.py --xml-path assets/casia_hand_M/casia_right_hand.xml --zmq_port 5561

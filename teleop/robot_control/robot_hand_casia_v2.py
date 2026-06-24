@@ -22,7 +22,7 @@ CASIA_Num_Motors_Real = 10
 class Casia_Controller:
     def __init__(self, left_hand_array_in, right_hand_array_in, fps = 100.0, Unit_Test = False,
                  simulation_mode = False, enable_zmq = True, zmq_left_port = 5560,
-                 zmq_right_port = 5561, zmq_left_real_port = 5555, zmq_right_real_port = 5551):
+                 zmq_right_port = 5561, zmq_left_real_port = 5555, zmq_right_real_port = 5556):
         """
         [note] A *_array type parameter requires using a multiprocessing Array, because it needs to be passed to the internal child process
 
@@ -237,7 +237,7 @@ if __name__ == "__main__":
     parser.add_argument('--zmq_left_port', type=int, default=5560, help='ZMQ port for left hand')
     parser.add_argument('--zmq_right_port', type=int, default=5561, help='ZMQ port for right hand')
     parser.add_argument('--zmq_left_real_port', type=int, default=5555, help='ZMQ port for left hand real')
-    parser.add_argument('--zmq_right_real_port', type=int, default=5551, help='ZMQ port for right hand real')
+    parser.add_argument('--zmq_right_real_port', type=int, default=5556, help='ZMQ port for right hand real')
     args = parser.parse_args()
     logger_mp.info(f"Command line arguments: {args}")
 

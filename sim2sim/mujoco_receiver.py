@@ -4,7 +4,11 @@ Receives retargeted joint positions via ZMQ and controls a MuJoCo robot.
 """
 import json
 import time
+import tempfile
+import xml.etree.ElementTree as ET
+from copy import deepcopy
 from pathlib import Path
+from urllib.parse import urlparse
 
 import numpy as np
 import mujoco
@@ -20,7 +24,9 @@ class MuJoCoReceiver:
     def __init__(
         self,
         xml_path: str,
+        zmq_url: str = "localhost",
         zmq_port: int = 5550,
+        zmq_port_right: int | None = None,
         speed: float = 1.0,
         smoothing_alpha: float = 0.2,
         interpol_steps: int = 5,
@@ -29,15 +35,23 @@ class MuJoCoReceiver:
         Initialize MuJoCo robot and ZMQ subscriber.
         
         Args:
-            xml_path: Path to MuJoCo XML model file
+            xml_path: Path to one XML file, or two comma-separated XML files
+            zmq_url: ZMQ host or full tcp:// endpoint (default localhost)
             zmq_port: ZMQ socket port number (default 5550 for sim2sim)
+            zmq_port_right: Optional second port for dual-hand mode.
             speed: Simulation speed multiplier (default 1.0)
             smoothing_alpha: Low-pass filter alpha (0-1, lower = more smoothing)
             interpol_steps: Number of steps to interpolate between commands
         """
+        self.source_xml_paths = [path.strip() for path in xml_path.split(",") if path.strip()]
+        self.dual_hand_mode = len(self.source_xml_paths) > 1
+        self._generated_model_path: str | None = None
+
+        model_path = self._build_model_path(self.source_xml_paths)
+
         # Load MuJoCo model
-        logger.info(f"Loading MuJoCo model from {xml_path}")
-        self.model = mujoco.MjModel.from_xml_path(xml_path)
+        logger.info(f"Loading MuJoCo model from {model_path}")
+        self.model = mujoco.MjModel.from_xml_path(model_path)
         self.data = mujoco.MjData(self.model)
         self.speed = speed
         
@@ -49,14 +63,28 @@ class MuJoCoReceiver:
         for i in range(self.model.njnt):
             joint_name = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_JOINT, i)
             logger.info(f"  {i}: {joint_name}")
+
+        if self.dual_hand_mode:
+            right_port = zmq_port_right if zmq_port_right is not None else zmq_port + 1
+            self.zmq_endpoints = [
+                self._build_zmq_endpoint(zmq_url, zmq_port, use_exact_url=False),
+                self._build_zmq_endpoint(zmq_url, right_port, use_exact_url=False),
+            ]
+        else:
+            self.zmq_endpoints = [self._build_zmq_endpoint(zmq_url, zmq_port, use_exact_url=True)]
+
+        self.zmq_endpoint = self.zmq_endpoints[0]
         
         # Setup ZMQ subscriber
         self.context = zmq.Context()
-        self.socket = self.context.socket(zmq.SUB)
-        self.socket.connect(f"tcp://localhost:{zmq_port}")
-        self.socket.setsockopt_string(zmq.SUBSCRIBE, "")
-        self.socket.setsockopt(zmq.RCVTIMEO, 1000)  # 1 second timeout
-        logger.info(f"ZMQ subscriber connected to localhost:{zmq_port}")
+        self.sockets = []
+        for endpoint in self.zmq_endpoints:
+            socket = self.context.socket(zmq.SUB)
+            socket.connect(endpoint)
+            socket.setsockopt_string(zmq.SUBSCRIBE, "")
+            socket.setsockopt(zmq.RCVTIMEO, 1000)  # 1 second timeout
+            self.sockets.append(socket)
+            logger.info(f"ZMQ subscriber connected to {endpoint}")
         
         # Smoothing parameters
         self.smoothing_alpha = smoothing_alpha
@@ -71,6 +99,95 @@ class MuJoCoReceiver:
         
         self.last_qpos = None
         self.joint_names = None
+
+    def _build_zmq_endpoint(self, zmq_url: str, zmq_port: int, use_exact_url: bool) -> str:
+        if zmq_url.startswith("tcp://"):
+            if use_exact_url:
+                return zmq_url
+
+            parsed = urlparse(zmq_url)
+            host = parsed.hostname or "localhost"
+            return f"tcp://{host}:{zmq_port}"
+
+        return f"tcp://{zmq_url}:{zmq_port}"
+
+    def _build_model_path(self, xml_paths: list[str]) -> str:
+        if len(xml_paths) == 1:
+            return xml_paths[0]
+
+        common_children: list[ET.Element] = []
+
+        first_xml = Path(xml_paths[0]).resolve()
+        first_tree = ET.parse(first_xml)
+        first_root = first_tree.getroot()
+        common_children = [
+            deepcopy(child)
+            for child in list(first_root)
+            if child.tag not in {"asset", "worldbody"}
+        ]
+
+        root = ET.Element("mujoco", {"model": "CASIAHAND-M-Dual"})
+        for child in common_children:
+            root.append(child)
+
+        asset = ET.SubElement(root, "asset")
+        worldbody = ET.SubElement(root, "worldbody")
+
+        for index, xml_path in enumerate(xml_paths):
+            xml_file = Path(xml_path).resolve()
+            tree = ET.parse(xml_file)
+            source_root = tree.getroot()
+            base_dir = xml_file.parent
+
+            source_asset = source_root.find("asset")
+            if source_asset is not None:
+                for child in list(source_asset):
+                    asset_child = deepcopy(child)
+                    self._rewrite_mesh_paths(asset_child, base_dir)
+                    asset.append(asset_child)
+
+            source_worldbody = source_root.find("worldbody")
+            if source_worldbody is None:
+                raise ValueError(f"Missing <worldbody> in {xml_path}")
+
+            hand_wrapper = ET.SubElement(
+                worldbody,
+                "body",
+                {
+                    "name": f"hand_{index}_root",
+                    "pos": self._hand_offset(index),
+                    "quat": self._hand_rotation_quat(index),
+                },
+            )
+            for child in list(source_worldbody):
+                hand_wrapper.append(deepcopy(child))
+
+        temp_file = tempfile.NamedTemporaryFile("w", suffix="_dual_hand.xml", delete=False)
+        temp_file_path = Path(temp_file.name)
+        temp_file.close()
+        ET.ElementTree(root).write(temp_file_path, encoding="unicode")
+        self._generated_model_path = str(temp_file_path)
+        logger.info(f"Generated combined MuJoCo XML at {self._generated_model_path}")
+        return self._generated_model_path
+
+    def _rewrite_mesh_paths(self, element: ET.Element | None, base_dir: Path) -> None:
+        if element is None:
+            return
+
+        file_attr = element.attrib.get("file")
+        if file_attr:
+            element.attrib["file"] = str((base_dir / file_attr).resolve())
+
+        for child in list(element):
+            self._rewrite_mesh_paths(child, base_dir)
+
+    def _hand_offset(self, index: int) -> str:
+        if index == 0:
+            return "-0.12 0 0"
+        return "0.12 0 0"
+
+    def _hand_rotation_quat(self, index: int) -> str:
+        return "0 0 0 1"
 
     def update_target_qpos(self, target_qpos: np.ndarray, joint_names: list):
         """
@@ -147,33 +264,38 @@ class MuJoCoReceiver:
                 f"interpol_steps={self.interpol_steps}"
             )
             
-            last_receive_time = time.time()
+            last_receive_times = {endpoint: time.time() for endpoint in self.zmq_endpoints}
             
             while viewer.is_running():
-                try:
-                    # Try to receive ZMQ message
-                    message = self.socket.recv(zmq.NOBLOCK)
-                    data = json.loads(message.decode("utf-8"))
-                    
-                    qpos = np.array(data["qpos"])
-                    joint_names = data["joint_names"]
-                    timestamp = data.get("timestamp", time.time())
-                    
-                    self.update_target_qpos(qpos, joint_names)
-                    last_receive_time = time.time()
-                    logger.info(f"Updated target state: {qpos}")
-                    
-                except zmq.Again:
-                    # No message available, continue
-                    pass
-                except json.JSONDecodeError as e:
-                    logger.error(f"Failed to decode ZMQ message: {e}")
-                except Exception as e:
-                    logger.error(f"Error updating robot state: {e}")
+                for endpoint, socket in zip(self.zmq_endpoints, self.sockets):
+                    try:
+                        # Try to receive ZMQ message
+                        message = socket.recv(zmq.NOBLOCK)
+                        data = json.loads(message.decode("utf-8"))
+                        
+                        qpos = np.array(data["qpos"])
+                        joint_names = data["joint_names"]
+                        timestamp = data.get("timestamp", time.time())
+                        
+                        self.update_target_qpos(qpos, joint_names)
+                        last_receive_times[endpoint] = time.time()
+                        logger.info(f"Updated target state from {endpoint}: {qpos}")
+                        
+                    except zmq.Again:
+                        # No message available, continue
+                        pass
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Failed to decode ZMQ message from {endpoint}: {e}")
+                    except Exception as e:
+                        logger.error(f"Error updating robot state from {endpoint}: {e}")
                 
                 # Check if we haven't received data for too long
-                if time.time() - last_receive_time > 5.0:
-                    logger.warning(f"No ZMQ messages received for 5 seconds for port {self.zmq_port}. Check if sender is running.")
+                for endpoint, last_receive_time in last_receive_times.items():
+                    if time.time() - last_receive_time > 5.0:
+                        logger.warning(
+                            f"No ZMQ messages received for 5 seconds from {endpoint}. "
+                            "Check if sender is running."
+                        )
                 
                 # Perform interpolation step
                 self.step_interpolation()
@@ -184,13 +306,21 @@ class MuJoCoReceiver:
 
     def close(self):
         """Close ZMQ socket."""
-        self.socket.close()
+        for socket in getattr(self, "sockets", []):
+            socket.close()
         self.context.term()
+        if self._generated_model_path is not None:
+            try:
+                Path(self._generated_model_path).unlink(missing_ok=True)
+            except Exception:
+                pass
 
 
 def main(
     xml_path: str,
+    zmq_url: str = "localhost",
     zmq_port: int = 5560,
+    zmq_port_right: int | None = None,
     speed: float = 1.0,
     smoothing_alpha: float = 0.2,
     interpol_steps: int = 8,
@@ -199,8 +329,10 @@ def main(
     Run MuJoCo simulation with ZMQ control (sim2sim).
     
     Args:
-        xml_path: Path to MuJoCo XML model file.
+        xml_path: Path to one XML file, or two comma-separated XML files.
+        zmq_url: ZMQ host or full tcp:// endpoint (default localhost).
         zmq_port: ZMQ socket port number (default 5550 for sim2sim).
+        zmq_port_right: Optional second port for dual-hand mode.
         speed: Simulation speed multiplier (default 1.0).
         smoothing_alpha: Low-pass filter alpha for command smoothing (0-1).
             Lower values provide more smoothing (default 0.2).
@@ -208,13 +340,17 @@ def main(
             command updates (default 8). Higher values produce smoother motion.
     """
     # Check if file exists
-    if not Path(xml_path).exists():
-        logger.error(f"XML file not found: {xml_path}")
+    xml_paths = [path.strip() for path in xml_path.split(",") if path.strip()]
+    missing_paths = [path for path in xml_paths if not Path(path).exists()]
+    if missing_paths:
+        logger.error(f"XML file not found: {', '.join(missing_paths)}")
         return
     
     receiver = MuJoCoReceiver(
         xml_path,
+        zmq_url=zmq_url,
         zmq_port=zmq_port,
+        zmq_port_right=zmq_port_right,
         speed=speed,
         smoothing_alpha=smoothing_alpha,
         interpol_steps=interpol_steps,
