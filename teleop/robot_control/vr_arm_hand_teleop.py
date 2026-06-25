@@ -1,4 +1,5 @@
 import argparse
+import json
 import logging
 import os
 import signal
@@ -307,6 +308,61 @@ class RealG1ArmController:
         pass
 
 
+class ZmqG1ArmController:
+    def __init__(self, robot: str, bind_host: str, port: int, connect_delay: float):
+        try:
+            import zmq
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "The dex_teleop venv does not have pyzmq installed. "
+                "Install it before using --backend zmq."
+            ) from exc
+
+        self.num_joints = len(ROBOT_ARM_JOINT_NAMES[robot])
+        self.q = np.zeros(self.num_joints, dtype=np.float64)
+        self.dq = np.zeros(self.num_joints, dtype=np.float64)
+        self.last_send_time = None
+        self.context = zmq.Context()
+        self.socket = self.context.socket(zmq.PUB)
+        self.socket.setsockopt(zmq.LINGER, 0)
+        self.endpoint = f"tcp://{bind_host}:{port}"
+        self.socket.bind(self.endpoint)
+        LOGGER.info(
+            "ZMQ arm publisher bound to %s for robot=%s (%d joints).",
+            self.endpoint,
+            robot,
+            self.num_joints,
+        )
+        if connect_delay > 0.0:
+            time.sleep(connect_delay)
+
+    def get_state(self) -> ArmState:
+        return ArmState(q=self.q.copy(), dq=self.dq.copy())
+
+    def send(self, q_target: np.ndarray, tauff_target: Optional[np.ndarray] = None) -> None:
+        del tauff_target
+        q_target = np.asarray(q_target, dtype=np.float64)
+        if q_target.shape != (self.num_joints,):
+            raise ValueError(f"Expected {self.num_joints} arm joints, got shape {q_target.shape}")
+
+        now = time.time()
+        if self.last_send_time is not None and now > self.last_send_time:
+            self.dq = (q_target - self.q) / (now - self.last_send_time)
+        else:
+            self.dq = np.zeros_like(q_target)
+        self.q = q_target.copy()
+        self.last_send_time = now
+        self.socket.send_string(json.dumps(self.q.tolist()))
+        LOGGER.info("ZMQ arm publisher sent q=%s", np.round(self.q, 3))
+
+    def go_home(self) -> None:
+        self.send(np.zeros(self.num_joints, dtype=np.float64))
+
+    def close(self) -> None:
+        self.socket.close()
+        self.context.term()
+
+
 class CasiaHandBridge:
     def __init__(
         self,
@@ -388,7 +444,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         description="Minimal VR wrist/hand teleop for G1 arms and optional Casia hand retargeting."
     )
     parser.add_argument("--robot", choices=("g1_29", "g1_23"), default="g1_29")
-    parser.add_argument("--backend", choices=("mujoco", "real"), default="mujoco")
+    parser.add_argument("--backend", choices=("mujoco", "real", "zmq"), default="mujoco")
     parser.add_argument("--hand", choices=("none", "casia"), default="none")
     parser.add_argument("--frequency", type=float, default=30.0)
     parser.add_argument(
@@ -407,6 +463,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--mujoco-kp", type=float, default=80.0)
     parser.add_argument("--mujoco-kd", type=float, default=3.0)
+    parser.add_argument("--zmq-bind-host", default="*", help="Bind host for --backend zmq arm joint publisher.")
+    parser.add_argument("--zmq-port", type=int, default=8559, help="Port for --backend zmq arm joint publisher.")
+    parser.add_argument(
+        "--zmq-connect-delay",
+        type=float,
+        default=0.5,
+        help="Seconds to wait after binding the ZMQ publisher before sending data.",
+    )
     parser.add_argument("--start-immediately", action="store_true")
     parser.add_argument("--log-poses", action="store_true")
     parser.add_argument("--casia-enable-zmq", action=argparse.BooleanOptionalAction, default=True)
@@ -457,8 +521,15 @@ def run(args: argparse.Namespace) -> None:
             )
             if args.hand == "casia":
                 mujoco_hand_retargeter = CasiaMujocoRetargeter()
-        else:
+        elif args.backend == "real":
             arm_ctrl = RealG1ArmController(args.robot, args.network_interface, args.motion)
+        else:
+            arm_ctrl = ZmqG1ArmController(
+                args.robot,
+                args.zmq_bind_host,
+                args.zmq_port,
+                args.zmq_connect_delay,
+            )
 
         if args.hand == "casia":
             hand_bridge = CasiaHandBridge(

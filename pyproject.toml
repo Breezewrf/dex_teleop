@@ -133,7 +133,7 @@ explicit = true
 
 [tool.uv.sources]
 torch = { index = "pytorch-cpu" }
-unitree-sdk2py = { git = "https://github.com/unitreerobotics/unitree_sdk2_python.git", rev = "18b9ef8e57e69b73c5e9b301b8481fce16a44b9b" }
+unitree-sdk2py = { git = "https://github.com/unitreerobotics/unitree_sdk2_python.git" }
 dex-retargeting = { workspace = true }
 televuer = { workspace = true }
 

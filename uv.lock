@@ -890,7 +890,7 @@ requires-dist = [
     { name = "triton", specifier = "==2.3.0" },
     { name = "typing-extensions" },
     { name = "tyro", specifier = ">=1.0.8" },
-    { name = "unitree-sdk2py", git = "https://github.com/unitreerobotics/unitree_sdk2_python.git?rev=18b9ef8e57e69b73c5e9b301b8481fce16a44b9b" },
+    { name = "unitree-sdk2py", git = "https://github.com/unitreerobotics/unitree_sdk2_python.git" },
     { name = "vuer", specifier = "==0.0.56" },
     { name = "waterbear", specifier = "==2.6.8" },
     { name = "wcwidth" },
@@ -2958,7 +2958,7 @@ wheels = [
 [[package]]
 name = "unitree-sdk2py"
 version = "1.0.1"
-source = { git = "https://github.com/unitreerobotics/unitree_sdk2_python.git?rev=18b9ef8e57e69b73c5e9b301b8481fce16a44b9b#18b9ef8e57e69b73c5e9b301b8481fce16a44b9b" }
+source = { git = "https://github.com/unitreerobotics/unitree_sdk2_python.git#4f12b0134e87ae33f3401bebf1c49f527dff4abd" }
 dependencies = [
     { name = "cyclonedds" },
     { name = "numpy" },
