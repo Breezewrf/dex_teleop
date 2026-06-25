@@ -9,7 +9,13 @@ import zmq
 from multiprocessing import Process, Array, Value, Lock
 
 import logging_mp
-logging_mp.basicConfig(level=logging_mp.INFO)
+
+try:
+    logging_mp.basicConfig(level=logging_mp.INFO)
+except RuntimeError:
+    # logging_mp may already be initialized by another module in the same process.
+    pass
+
 logger_mp = logging_mp.getLogger(__name__)
 parent2_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(parent2_dir)
