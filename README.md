@@ -1,8 +1,13 @@
 # dex_teleop
 
 ## Prepare Env
+`conda create -n dex python=3.10 pinocchio=3.1.0 numpy=1.26.4 -c conda-forge`
 
-`uv sync`
+```sh
+UV_PROJECT_ENVIRONMENT=/home/breeze/anaconda3/envs/dex \
+UV_PYTHON=$(which python) \
+uv sync
+```
 
 `uv run teleop/robot_control/robot_hand_casia_v2.py`
 

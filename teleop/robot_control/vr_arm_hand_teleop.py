@@ -1,5 +1,4 @@
 import argparse
-import json
 import logging
 import os
 import signal
@@ -26,6 +25,7 @@ DEFAULT_G1_MODEL = os.path.join(PROJECT_ROOT, "assets/g1/g1_body29_hand14.xml")
 DEFAULT_G1_23_MODEL = os.path.join(PROJECT_ROOT, "assets/g1/g1_23dof_rev_1_0.xml")
 DEFAULT_G1_CASIA_MODEL = os.path.join(PROJECT_ROOT, "assets/g1/g1_body29_casia_hand.xml")
 DEFAULT_G1_23_CASIA_MODEL = os.path.join(PROJECT_ROOT, "assets/g1/g1_23dof_rev_1_0_casia_hand.xml")
+DEFAULT_X2_MODEL = os.path.join(PROJECT_ROOT, "assets/X2/x2_ultra.xml")
 
 G1_29_ARM_JOINT_NAMES = (
     "left_shoulder_pitch_joint",
@@ -57,9 +57,33 @@ G1_23_ARM_JOINT_NAMES = (
     "right_wrist_roll_joint",
 )
 
+X2_ARM_JOINT_NAMES = (
+    "left_shoulder_pitch_joint",
+    "left_shoulder_roll_joint",
+    "left_shoulder_yaw_joint",
+    "left_elbow_joint",
+    "left_wrist_yaw_joint",
+    "left_wrist_pitch_joint",
+    "left_wrist_roll_joint",
+    "right_shoulder_pitch_joint",
+    "right_shoulder_roll_joint",
+    "right_shoulder_yaw_joint",
+    "right_elbow_joint",
+    "right_wrist_yaw_joint",
+    "right_wrist_pitch_joint",
+    "right_wrist_roll_joint",
+)
+
 ROBOT_ARM_JOINT_NAMES = {
     "g1_29": G1_29_ARM_JOINT_NAMES,
     "g1_23": G1_23_ARM_JOINT_NAMES,
+    "x2": X2_ARM_JOINT_NAMES,
+}
+
+ROBOT_MUJOCO_BASE_POSITIONS = {
+    "g1_29": np.array([0.0, 0.0, 0.793]),
+    "g1_23": np.array([0.0, 0.0, 0.793]),
+    "x2": np.array([0.0, 0.0, 0.68]),
 }
 
 CASIA_LEFT_JOINT_NAMES = (
@@ -108,6 +132,7 @@ class MujocoG1ArmController:
         self,
         model_path: str,
         joint_names: Iterable[str] = G1_29_ARM_JOINT_NAMES,
+        base_pos: Optional[np.ndarray] = None,
         render: bool = True,
         control_mode: str = "kinematic",
         kp: float = 80.0,
@@ -133,7 +158,7 @@ class MujocoG1ArmController:
         self.qpos_ids = np.array([self.model.jnt_qposadr[joint_id] for joint_id in self.joint_ids], dtype=np.int32)
         self.dof_ids = np.array([self.model.jnt_dofadr[joint_id] for joint_id in self.joint_ids], dtype=np.int32)
         self.ctrl_ids = np.array(
-            [self._name_to_id(mujoco.mjtObj.mjOBJ_ACTUATOR, name) for name in self.joint_names],
+            [self._joint_to_actuator_id(name) for name in self.joint_names],
             dtype=np.int32,
         )
         self.ctrl_ranges = self.model.actuator_ctrlrange[self.ctrl_ids].copy()
@@ -150,7 +175,8 @@ class MujocoG1ArmController:
         if self.control_mode not in ("kinematic", "pd"):
             raise ValueError(f"Unsupported MuJoCo control mode: {self.control_mode}")
 
-        self.data.qpos[0:3] = np.array([0.0, 0.0, 0.793])
+        if base_pos is not None:
+            self.data.qpos[0:3] = np.asarray(base_pos, dtype=np.float64)
         self.data.qpos[3:7] = np.array([1.0, 0.0, 0.0, 0.0])
         mujoco.mj_forward(self.model, self.data)
 
@@ -167,6 +193,13 @@ class MujocoG1ArmController:
         if obj_id < 0:
             raise ValueError(f"MuJoCo object not found: {name}")
         return obj_id
+
+    def _joint_to_actuator_id(self, joint_name: str) -> int:
+        for actuator_name in (joint_name, f"motor_{joint_name}"):
+            actuator_id = self.mujoco.mj_name2id(self.model, self.mujoco.mjtObj.mjOBJ_ACTUATOR, actuator_name)
+            if actuator_id >= 0:
+                return actuator_id
+        raise ValueError(f"MuJoCo actuator not found for joint: {joint_name}")
 
     def _setup_casia_hand_joints(self) -> None:
         left_joint_ids = self._required_joint_ids(CASIA_LEFT_JOINT_NAMES)
@@ -318,7 +351,8 @@ class ZmqG1ArmController:
                 "Install it before using --backend zmq."
             ) from exc
 
-        self.num_joints = len(ROBOT_ARM_JOINT_NAMES[robot])
+        self.joint_names = ROBOT_ARM_JOINT_NAMES[robot]
+        self.num_joints = len(self.joint_names)
         self.q = np.zeros(self.num_joints, dtype=np.float64)
         self.dq = np.zeros(self.num_joints, dtype=np.float64)
         self.last_send_time = None
@@ -352,8 +386,16 @@ class ZmqG1ArmController:
             self.dq = np.zeros_like(q_target)
         self.q = q_target.copy()
         self.last_send_time = now
-        self.socket.send_string(json.dumps(self.q.tolist()))
-        LOGGER.info("ZMQ arm publisher sent q=%s", np.round(self.q, 3))
+        self.socket.send_json(
+            {
+                "positions": {
+                    joint_name: float(joint_value)
+                    for joint_name, joint_value in zip(self.joint_names, self.q, strict=True)
+                },
+                "source": "teleop/robot_control/vr_arm_hand_teleop.py",
+                "pose": "teleop",
+            }
+        )
 
     def go_home(self) -> None:
         self.send(np.zeros(self.num_joints, dtype=np.float64))
@@ -428,6 +470,10 @@ class CasiaMujocoRetargeter:
 
 
 def default_mujoco_model(robot: str, hand: str) -> str:
+    if robot == "x2":
+        if hand == "casia":
+            raise ValueError("The X2 MuJoCo model does not contain Casia hand joints. Use --hand none.")
+        return DEFAULT_X2_MODEL
     if hand == "casia":
         if robot == "g1_23" and os.path.exists(DEFAULT_G1_23_CASIA_MODEL):
             return DEFAULT_G1_23_CASIA_MODEL
@@ -443,7 +489,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Minimal VR wrist/hand teleop for G1 arms and optional Casia hand retargeting."
     )
-    parser.add_argument("--robot", choices=("g1_29", "g1_23"), default="g1_29")
+    parser.add_argument("--robot", choices=("g1_29", "g1_23", "x2"), default="g1_29")
     parser.add_argument("--backend", choices=("mujoco", "real", "zmq"), default="mujoco")
     parser.add_argument("--hand", choices=("none", "casia"), default="none")
     parser.add_argument("--frequency", type=float, default=30.0)
@@ -463,7 +509,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--mujoco-kp", type=float, default=80.0)
     parser.add_argument("--mujoco-kd", type=float, default=3.0)
-    parser.add_argument("--zmq-bind-host", default="*", help="Bind host for --backend zmq arm joint publisher.")
+    parser.add_argument("--zmq-bind-host", default="0.0.0.0", help="Bind host for --backend zmq arm joint publisher.")
     parser.add_argument("--zmq-port", type=int, default=8559, help="Port for --backend zmq arm joint publisher.")
     parser.add_argument(
         "--zmq-connect-delay",
@@ -483,7 +529,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 def run(args: argparse.Namespace) -> None:
     from televuer import TeleVuerWrapper
-    from teleop.robot_control.robot_arm_ik import G1_23_ArmIK, G1_29_ArmIK
+    from teleop.robot_control.robot_arm_ik import G1_23_ArmIK, G1_29_ArmIK, X2_ArmIK
+
+    if args.robot == "x2" and args.backend == "real":
+        raise ValueError("--robot x2 is currently supported for --backend mujoco and --backend zmq only.")
 
     model_path = args.model
     if args.backend == "mujoco" and model_path is None:
@@ -492,6 +541,7 @@ def run(args: argparse.Namespace) -> None:
     arm_ik_cls = {
         "g1_29": G1_29_ArmIK,
         "g1_23": G1_23_ArmIK,
+        "x2": X2_ArmIK,
     }[args.robot]
     arm_joint_names = ROBOT_ARM_JOINT_NAMES[args.robot]
 
@@ -513,6 +563,7 @@ def run(args: argparse.Namespace) -> None:
             arm_ctrl = MujocoG1ArmController(
                 model_path,
                 joint_names=arm_joint_names,
+                base_pos=ROBOT_MUJOCO_BASE_POSITIONS[args.robot],
                 render=not args.no_render,
                 control_mode=args.mujoco_control,
                 kp=args.mujoco_kp,

@@ -9,3 +9,4 @@
 *.key
 *.cnf
 .vscode/
+*cache.pkl
