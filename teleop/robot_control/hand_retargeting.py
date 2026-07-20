@@ -12,8 +12,8 @@ class HandType(Enum):
     UNITREE_DEX3_Unit_Test = "./assets/unitree_hand/unitree_dex3.yml"
     BRAINCO_HAND = "./assets/brainco_hand/brainco.yml"
     BRAINCO_HAND_Unit_Test = "./assets/brainco_hand/brainco.yml"
-    CASIA_HAND = "./assets/casia_hand/casia_v2.yml"
-    CASIA_HAND_Unit_Test = "./assets/casia_hand/casia_v2.yml"
+    CASIA_HAND = "./assets/casia_hand_M/casia.yml"
+    CASIA_HAND_Unit_Test = "./assets/casia_hand_M/casia.yml"
 
 class HandRetargeting:
     def __init__(self, hand_type: HandType):

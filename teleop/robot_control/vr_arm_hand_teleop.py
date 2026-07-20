@@ -298,57 +298,14 @@ class MujocoG1ArmController:
             self.viewer.close()
 
 
-class RealG1ArmController:
-    def __init__(self, robot: str, network_interface: Optional[str], motion_mode: bool):
-        try:
-            from unitree_sdk2py.core.channel import ChannelFactoryInitialize
-        except ModuleNotFoundError as exc:
-            raise RuntimeError(
-                "The dex_teleop venv does not have unitree_sdk2py installed. "
-                "Install it before using --backend real."
-            ) from exc
-
-        from teleop.robot_control.robot_arm import G1_23_ArmController, G1_29_ArmController
-        from teleop.utils.motion_switcher import MotionSwitcher
-
-        ChannelFactoryInitialize(0, networkInterface=network_interface)
-        self.motion_switcher = None
-        if not motion_mode:
-            self.motion_switcher = MotionSwitcher()
-            status, result = self.motion_switcher.Enter_Debug_Mode()
-            LOGGER.info("Enter debug mode: %s, %s", status, result)
-
-        controller_cls = {
-            "g1_29": G1_29_ArmController,
-            "g1_23": G1_23_ArmController,
-        }[robot]
-        LOGGER.info("Using real arm controller: %s", controller_cls.__name__)
-        self.arm = controller_cls(motion_mode=motion_mode, simulation_mode=False)
-        self.arm.speed_gradual_max()
-
-    def get_state(self) -> ArmState:
-        return ArmState(q=self.arm.get_current_dual_arm_q(), dq=self.arm.get_current_dual_arm_dq())
-
-    def send(self, q_target: np.ndarray, tauff_target: Optional[np.ndarray] = None) -> None:
-        if tauff_target is None:
-            tauff_target = np.zeros_like(q_target)
-        self.arm.ctrl_dual_arm(q_target, tauff_target)
-
-    def go_home(self) -> None:
-        self.arm.ctrl_dual_arm_go_home()
-
-    def close(self) -> None:
-        pass
-
-
-class ZmqG1ArmController:
+class RealArmController:
     def __init__(self, robot: str, bind_host: str, port: int, connect_delay: float):
         try:
             import zmq
         except ModuleNotFoundError as exc:
             raise RuntimeError(
                 "The dex_teleop venv does not have pyzmq installed. "
-                "Install it before using --backend zmq."
+                "Install it before using --backend real."
             ) from exc
 
         self.joint_names = ROBOT_ARM_JOINT_NAMES[robot]
@@ -490,7 +447,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         description="Minimal VR wrist/hand teleop for G1 arms and optional Casia hand retargeting."
     )
     parser.add_argument("--robot", choices=("g1_29", "g1_23", "x2"), default="g1_29")
-    parser.add_argument("--backend", choices=("mujoco", "real", "zmq"), default="mujoco")
+    parser.add_argument("--backend", choices=("mujoco", "real"), default="mujoco")
     parser.add_argument("--hand", choices=("none", "casia"), default="none")
     parser.add_argument("--frequency", type=float, default=30.0)
     parser.add_argument(
@@ -498,8 +455,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="MuJoCo XML path. Defaults to a G1 model matching --robot/--hand.",
     )
-    parser.add_argument("--network-interface", default=None)
-    parser.add_argument("--motion", action="store_true", help="Use rt/arm_sdk motion topic on real G1.")
     parser.add_argument("--no-render", action="store_true", help="Disable MuJoCo passive viewer.")
     parser.add_argument(
         "--mujoco-control",
@@ -509,8 +464,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--mujoco-kp", type=float, default=80.0)
     parser.add_argument("--mujoco-kd", type=float, default=3.0)
-    parser.add_argument("--zmq-bind-host", default="0.0.0.0", help="Bind host for --backend zmq arm joint publisher.")
-    parser.add_argument("--zmq-port", type=int, default=8559, help="Port for --backend zmq arm joint publisher.")
+    parser.add_argument("--zmq-bind-host", default="0.0.0.0", help="Bind host for --backend real arm joint publisher.")
+    parser.add_argument("--zmq-port", type=int, default=8559, help="ZMQ port for --backend real arm joint publisher.")
     parser.add_argument(
         "--zmq-connect-delay",
         type=float,
@@ -530,9 +485,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def run(args: argparse.Namespace) -> None:
     from televuer import TeleVuerWrapper
     from teleop.robot_control.robot_arm_ik import G1_23_ArmIK, G1_29_ArmIK, X2_ArmIK
-
-    if args.robot == "x2" and args.backend == "real":
-        raise ValueError("--robot x2 is currently supported for --backend mujoco and --backend zmq only.")
 
     model_path = args.model
     if args.backend == "mujoco" and model_path is None:
@@ -572,10 +524,8 @@ def run(args: argparse.Namespace) -> None:
             )
             if args.hand == "casia":
                 mujoco_hand_retargeter = CasiaMujocoRetargeter()
-        elif args.backend == "real":
-            arm_ctrl = RealG1ArmController(args.robot, args.network_interface, args.motion)
         else:
-            arm_ctrl = ZmqG1ArmController(
+            arm_ctrl = RealArmController(
                 args.robot,
                 args.zmq_bind_host,
                 args.zmq_port,

@@ -1,7 +1,7 @@
 [project]
 name = "dex-teleop"
 version = "0.1.0"
-description = "Add your description here"
+description = "A Lightweight XR-based teleoperation for dexterous robot hands and humanoid arms."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -123,7 +123,6 @@ dependencies = [
     "widgetsnbextension",
     "wrapt",
     "yarl==1.23.0",
-    "unitree-sdk2py"
 ]
 
 [[tool.uv.index]]
@@ -133,7 +132,6 @@ explicit = true
 
 [tool.uv.sources]
 torch = { index = "pytorch-cpu" }
-unitree-sdk2py = { git = "https://github.com/unitreerobotics/unitree_sdk2_python.git" }
 dex-retargeting = { workspace = true }
 televuer = { workspace = true }
 
@@ -142,4 +140,3 @@ members = [
     "teleop/robot_control/dex-retargeting",
     "teleop/televuer",
 ]
-

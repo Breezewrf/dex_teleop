@@ -25,8 +25,8 @@ class MuJoCoReceiver:
         self,
         xml_path: str,
         zmq_url: str = "localhost",
-        zmq_port: int = 5550,
-        zmq_port_right: int | None = None,
+        zmq_port_left: int = 5560,
+        zmq_port_right: int = 5561,
         speed: float = 1.0,
         smoothing_alpha: float = 0.2,
         interpol_steps: int = 5,
@@ -37,8 +37,8 @@ class MuJoCoReceiver:
         Args:
             xml_path: Path to one XML file, or two comma-separated XML files
             zmq_url: ZMQ host or full tcp:// endpoint (default localhost)
-            zmq_port: ZMQ socket port number (default 5550 for sim2sim)
-            zmq_port_right: Optional second port for dual-hand mode.
+            zmq_port_left: ZMQ socket port number for the left hand (default 5560 for sim2sim)
+            zmq_port_right: ZMQ socket port number for the right hand (default 5561 for sim2sim)
             speed: Simulation speed multiplier (default 1.0)
             smoothing_alpha: Low-pass filter alpha (0-1, lower = more smoothing)
             interpol_steps: Number of steps to interpolate between commands
@@ -65,15 +65,22 @@ class MuJoCoReceiver:
             logger.info(f"  {i}: {joint_name}")
 
         if self.dual_hand_mode:
-            right_port = zmq_port_right if zmq_port_right is not None else zmq_port + 1
             self.zmq_endpoints = [
-                self._build_zmq_endpoint(zmq_url, zmq_port, use_exact_url=False),
-                self._build_zmq_endpoint(zmq_url, right_port, use_exact_url=False),
+                self._build_zmq_endpoint(zmq_url, zmq_port_left, use_exact_url=False),
+                self._build_zmq_endpoint(zmq_url, zmq_port_right, use_exact_url=False),
             ]
         else:
-            self.zmq_endpoints = [self._build_zmq_endpoint(zmq_url, zmq_port, use_exact_url=True)]
+            if zmq_port_right is not None:
+                logger.info(
+                    "Using zmq_port_right as the single endpoint."
+                )
+                self.zmq_endpoints = [self._build_zmq_endpoint(zmq_url, zmq_port_right, use_exact_url=True)]
+            elif zmq_port_left is not None:
+                logger.info(
+                    "Using zmq_port_left as the single endpoint."
+                )
+                self.zmq_endpoints = [self._build_zmq_endpoint(zmq_url, zmq_port_left, use_exact_url=True)]
 
-        self.zmq_endpoint = self.zmq_endpoints[0]
         
         # Setup ZMQ subscriber
         self.context = zmq.Context()
@@ -319,8 +326,8 @@ class MuJoCoReceiver:
 def main(
     xml_path: str,
     zmq_url: str = "localhost",
-    zmq_port: int = 5560,
-    zmq_port_right: int | None = None,
+    zmq_port_left: int = 5560,
+    zmq_port_right: int = 5561,
     speed: float = 1.0,
     smoothing_alpha: float = 0.2,
     interpol_steps: int = 8,
@@ -331,8 +338,8 @@ def main(
     Args:
         xml_path: Path to one XML file, or two comma-separated XML files.
         zmq_url: ZMQ host or full tcp:// endpoint (default localhost).
-        zmq_port: ZMQ socket port number (default 5550 for sim2sim).
-        zmq_port_right: Optional second port for dual-hand mode.
+        zmq_port_left: ZMQ socket port number for the left hand (default 5560 for sim2sim).
+        zmq_port_right: ZMQ socket port number for the right hand (default 5561 for sim2sim).
         speed: Simulation speed multiplier (default 1.0).
         smoothing_alpha: Low-pass filter alpha for command smoothing (0-1).
             Lower values provide more smoothing (default 0.2).
@@ -349,7 +356,7 @@ def main(
     receiver = MuJoCoReceiver(
         xml_path,
         zmq_url=zmq_url,
-        zmq_port=zmq_port,
+        zmq_port_left=zmq_port_left,
         zmq_port_right=zmq_port_right,
         speed=speed,
         smoothing_alpha=smoothing_alpha,

@@ -1,18 +1,47 @@
 # dex_teleop
+A Lightweight XR-based teleoperation for dexterous robot hands and humanoid arms.
+
+The system receives hand and wrist tracking data from a Meta Quest headset, retargets the upper motion to the robot, and sends commands to either a MuJoCo simulation or physical hardware.
+
+## System Overview
+```
+  XR headset
+      |
+      | Hand and wrist tracking
+      v
+  TeleVuer
+      |
+      | Retargeting and control
+      v
+  ZMQ publishers
+      |
+      +----> MuJoCo simulation
+      |
+      +----> Physical dex hands
+
+  Default ZMQ ports: 
+
+   Output         ARM  Left hand    Right hand  
+  ━━━━━━━━━━━━    ━━━  ━━━━━━━━━    ━━━━━━━━━━
+   Simulation     8559    5560          5561
+  ────────────    ───  ─────────    ──────────
+   Physical hand  8559    5555          5556
+```
 
 ## Prepare Env
 `conda create -n dex python=3.10 pinocchio=3.1.0 numpy=1.26.4 -c conda-forge`
 
+**Also avaiable in python 3.11 for Robojudo-Plus**
+
+Install the project dependencies into the active environment:
 ```sh
-UV_PROJECT_ENVIRONMENT=/home/breeze/anaconda3/envs/dex \
+UV_PROJECT_ENVIRONMENT=PATH_TO_ANACONDA/envs/dex \
 UV_PYTHON=$(which python) \
 uv sync
 ```
 
-`uv run teleop/robot_control/robot_hand_casia_v2.py`
-
 ## Set up XR Devices
-For Pico / Quest XR Devices
+For Quest3 XR Devices
 1. Setup certificates
 ```bash
 openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout key.pem -out cert.pem
@@ -25,7 +54,9 @@ mkdir -p ~/.config/xr_teleoperate/
 cp cert.pem key.pem ~/.config/xr_teleoperate/
 ```
 
-`sudo apt-get install -y libgl1-mesa-glx libglib2.0-0` PyPI 下载的 opencv-python 轮子在运行时需要调用系统的 OpenGL 核心图形库（libGL.so.1）和 C 语言核心库，但由于 Ubuntu 系统（或者 Docker 镜像）默认非常精简，没有内置这些多媒体库，导致 Python 找不到它们
+`sudo apt-get install -y libgl1-mesa-glx libglib2.0-0` 
+
+The opencv-python wheel downloaded from PyPI requires the system's OpenGL core graphics library (libGL.so.1) and C language core library to run. However, because Ubuntu systems (or Docker images) are very streamlined by default and do not include these multimedia libraries, Python cannot find them.
 
 2.  Allow Firewall Access
 ```bash
@@ -41,39 +72,48 @@ uv run teleop/televuer/example/test_tv_wrapper.py
 # Open browser on XR, open link: https://192.168.252.28:8012?ws=wss://192.168.252.28:8012
 # Click the "pass-through" button in the bottom-left corner of the screen.
 # Press Enter in the terminal to launch the program, after your hands have been detected by XR.
-
-# or run:
-uv run example/test_tv_wrapper.py
-
+# Use the address reachable from the XR headset as <PC_IP> in the above instructions, `hostname -I`
 ```
 
 ## Sim2Sim
+- G1 Arm Teleop:
 ```sh
-# Add --zmq-url to target a remote host or a full tcp:// endpoint.
-# For both hands, pass both XMLs as a comma-separated list and use the default
-# paired ports (5560 for left, 5561 for right).
+python teleop/robot_control/vr_arm_hand_teleop.py --backend mujoco --hand casia --robot g1_23
+```
 
+- X2 Arm Teleop:
+```sh
+python teleop/robot_control/vr_arm_hand_teleop.py --backend mujoco --hand none --robot x2
+```
+
+For Dex hand, current only support CASIA hand
+```sh
 # Sim of left hand
-uv run sim2sim/mujoco_receiver.py --xml-path assets/casia_hand_M/casia_left_hand.xml --zmq_port 5560
-
-# Sim of both hands
-uv run sim2sim/mujoco_receiver.py --xml-path assets/casia_hand_M/casia_left_hand.xml,assets/casia_hand_M/casia_right_hand.xml --zmq_port 5560
+uv run sim2sim/mujoco_receiver.py --xml-path assets/casia_hand_M/casia_left_hand.xml
 
 # Sim of right hand
-uv run sim2sim/mujoco_receiver.py --xml-path assets/casia_hand_M/casia_right_hand.xml --zmq_port 5561
+uv run sim2sim/mujoco_receiver.py --xml-path assets/casia_hand_M/casia_right_hand.xml
+
+# Sim of both hands
+uv run sim2sim/mujoco_receiver.py --xml-path assets/casia_hand_M/casia_left_hand.xml,assets/casia_hand_M/casia_right_hand.xml
 
 # Teleop
 uv run teleop/robot_control/robot_hand_casia_v2.py
 
 ```
 
-Make sure left hand in the view
-
-✅ Left only → left works
-✅ Left + Right → both work
-❌ Right only → nothing works
-
 ## Sim2Real
+- G1 Arm Teleop:
+```sh
+python teleop/robot_control/vr_arm_hand_teleop.py --backend real --hand casia --robot g1_23
+```
+
+- X2 Arm Teleop:
+```sh
+python teleop/robot_control/vr_arm_hand_teleop.py --backend real --hand none --robot x2
+```
+
+Following is for CAISA dex hands:
 ```sh
 source /opt/zkgj_libs/setup.sh
 cd ~/Desktop/toolkit/CH341SER_LINUX/driver/
