@@ -138,3 +138,7 @@ cd /home/breeze/Desktop/workplace/Humanoid/casia_hand_m_sdk_cpp/examples/teleop/
 
 uv run teleop/robot_control/robot_hand_casia_v2.py
 ```
+
+## Env setup problem
+- This submodule cannot be run in NumPy 2.4.6 as it may crash, please downgrade to 'numpy<2' or try to upgrade the affected module.
+- This submodule will automatically install a conda version scipy 1.17.1, which is not available in Robojudo, reinstall it using pypi 

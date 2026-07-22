@@ -14,8 +14,6 @@ license = { text = "MIT" }
 urls = { "Homepage" = "https://github.com/dexsuite/dex-retargeting" }
 
 dependencies = [
-    "numpy<2.0.0",
-    "torch==2.3.0",
     "pytransform3d>=3.5.0",
     "pin>=2.7.0",
     "nlopt>=2.6.1,<2.8.0",
