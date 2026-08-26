@@ -25,7 +25,7 @@ The system receives hand and wrist tracking data from a Meta Quest headset, reta
   ━━━━━━━━━━━━    ━━━  ━━━━━━━━━    ━━━━━━━━━━
    Simulation     8559    5560          5561
   ────────────    ───  ─────────    ──────────
-   Physical hand  8559    5555          5556
+   Physical       8559    5555          5556
 ```
 
 ## Prepare Env
@@ -102,6 +102,136 @@ uv run teleop/robot_control/robot_hand_casia_v2.py
 
 ```
 
+### OmniHandPro VR Retargeting
+
+OmniHandPro is simulated as a separate dual-hand MuJoCo scene. The VR
+retargeter publishes only the 12 active joints per hand. The remaining seven
+joint coordinates are passive:
+
+- thumb DIP follows thumb PIP;
+- index and middle DIP follow their PIP joints;
+- ring and pinky PIP/DIP follow their MCP joints.
+
+The URDF mimic adaptor is used during retargeting, while playback uses the
+nonlinear polynomial mappings defined by the MJCF.
+
+#### Retargeting modes
+
+`--omnihand-retargeting` selects how the 25 XR hand landmarks are converted to
+the 12 active OmniHand targets. This is independent of the MuJoCo control mode.
+
+| Mode | Target information | Advantages | Limitations |
+| --- | --- | --- | --- |
+| `dexpilot` (default) | Wrist-to-tip and fingertip-to-fingertip vectors | Stable pinch/grasp contact; DexPilot contact projection helps fingertips meet | Intermediate human finger joints are not directly constrained; contact projection has hysteresis |
+| `vector` | 20 finger-chain vectors and 10 fingertip-pair vectors | MCP/PIP/DIP segment shape contributes to the optimization; usually better articulated poses | No DexPilot contact projection, so fingertip contact can be less sticky; more sensitive to human/robot proportions |
+
+Start DexPilot retargeting:
+
+```sh
+python teleop/robot_control/vr_arm_hand_teleop.py \
+  --backend mujoco \
+  --robot x2 \
+  --hand omnihand \
+  --omnihand-retargeting dexpilot \
+  --no-render
+```
+
+Start Vector retargeting:
+
+```sh
+python teleop/robot_control/vr_arm_hand_teleop.py \
+  --backend mujoco \
+  --robot x2 \
+  --hand omnihand \
+  --omnihand-retargeting vector \
+  --no-render
+```
+
+#### MuJoCo playback modes
+
+`--control-mode` belongs to `sim2sim/mujoco_receiver.py` and controls how the
+received targets are played. It does not change the retarget optimizer.
+
+| Mode | Active joints | Passive joints | Intended use |
+| --- | --- | --- | --- |
+| `position-actuator` | Sent to MuJoCo position actuators | Solved by MuJoCo equality constraints during `mj_step()` | Dynamics, actuator force limits, damping, contacts and physically meaningful response |
+| `kinematic-coupled` | Written directly to `qpos` | Evaluated directly from the compiled MJCF equality polynomials, followed by `mj_forward()` | Low-latency retarget visualization and pose debugging |
+| `qpos` (legacy default) | Written directly to `qpos` | Not explicitly reconstructed before stepping | CASIA and models whose commanded joint set already contains every displayed joint; not recommended for OmniHand |
+
+For physics playback, start the receiver in one terminal:
+
+```sh
+uv run sim2sim/mujoco_receiver.py \
+  --xml-path assets/o12_hand_description-o12_t3/assets/MJCF/scene.xml \
+  --subscribe-both \
+  --control-mode position-actuator
+```
+
+This mode is intentionally slower: actuator `forcerange`, joint damping,
+contacts and one actuator driving multiple coupled joints all affect response.
+
+For low-latency visualization, start the kinematic coupled receiver instead:
+
+```sh
+uv run sim2sim/mujoco_receiver.py \
+  --xml-path assets/o12_hand_description-o12_t3/assets/MJCF/scene.xml \
+  --subscribe-both \
+  --control-mode kinematic-coupled \
+  --smoothing-alpha 1.0 \
+  --interpol-steps 1
+```
+
+Then start either retargeting command above in another terminal. `--no-render`
+disables the separate X2 arm viewer so only the OmniHand scene is displayed.
+
+Recommended combinations:
+
+| Goal | Retargeting | Playback |
+| --- | --- | --- |
+| Lowest latency and finger-shape debugging | `vector` | `kinematic-coupled` |
+| Pinch/OK/contact-oriented visualization | `dexpilot` | `kinematic-coupled` |
+| Evaluate physical response and coupling dynamics | `dexpilot` or `vector` | `position-actuator` |
+
+#### Tuning and known limitations
+
+- Both retarget configs currently use `low_pass_alpha: 0.2`. The receiver also
+  defaults to `--smoothing-alpha 0.2`; using both creates two cascaded filters.
+  For responsive kinematic playback, keep the retarget filter and use
+  `--smoothing-alpha 1.0 --interpol-steps 1` on the receiver.
+- `scaling_factor` is an isotropic scale: it changes finger length and lateral
+  finger spacing together. Human and OmniHand proportions are different, so a
+  value that matches finger length may still bias an ABAD joint.
+- The active joint message order places `middle_abad_joint` at index 7. For the
+  left hand, a persistent negative value turns the middle finger toward the
+  ring finger; for the right hand, the corresponding direction is positive.
+- Ring and pinky each have only one active flexion joint. Their PIP/DIP poses
+  must remain on the MJCF coupling curve and cannot reproduce arbitrary human
+  MCP/PIP/DIP combinations.
+- `kinematic-coupled` preserves the nonlinear pose mapping but intentionally
+  bypasses actuator force limits, dynamics and contact response. Use
+  `position-actuator` whenever those effects matter.
+
+Example: Vector retargeting with low-latency coupled playback uses these two
+commands in separate terminals:
+
+```sh
+uv run sim2sim/mujoco_receiver.py \
+  --xml-path assets/o12_hand_description-o12_t3/assets/MJCF/scene.xml \
+  --subscribe-both \
+  --control-mode kinematic-coupled \
+  --smoothing-alpha 1.0 \
+  --interpol-steps 1
+```
+
+```sh
+python teleop/robot_control/vr_arm_hand_teleop.py \
+  --backend mujoco \
+  --robot x2 \
+  --hand omnihand \
+  --omnihand-retargeting vector \
+  --no-render
+```
+
 ## Sim2Real
 - G1 Arm Teleop:
 ```sh
@@ -141,4 +271,4 @@ uv run teleop/robot_control/robot_hand_casia_v2.py
 
 ## Env setup problem
 - This submodule cannot be run in NumPy 2.4.6 as it may crash, please downgrade to 'numpy<2' or try to upgrade the affected module.
-- This submodule will automatically install a conda version scipy 1.17.1, which is not available in Robojudo, reinstall it using pypi 
+- This submodule will automatically install a conda version scipy 1.17.1, which is not available in Robojudo, reinstall it using pypi

@@ -14,6 +14,10 @@ class HandType(Enum):
     BRAINCO_HAND_Unit_Test = "./assets/brainco_hand/brainco.yml"
     CASIA_HAND = "./assets/casia_hand_M/casia.yml"
     CASIA_HAND_Unit_Test = "./assets/casia_hand_M/casia.yml"
+    OMNIHAND = "./assets/o12_hand_description-o12_t3/omnihand.yml"
+    OMNIHAND_Unit_Test = "./assets/o12_hand_description-o12_t3/omnihand.yml"
+    OMNIHAND_VECTOR = "./assets/o12_hand_description-o12_t3/omnihand_vector.yml"
+    OMNIHAND_VECTOR_Unit_Test = "./assets/o12_hand_description-o12_t3/omnihand_vector.yml"
 
 class HandRetargeting:
     def __init__(self, hand_type: HandType):
@@ -32,6 +36,14 @@ class HandRetargeting:
         elif hand_type == HandType.CASIA_HAND:
             RetargetingConfig.set_default_urdf_dir('./assets')
         elif hand_type == HandType.CASIA_HAND_Unit_Test:
+            RetargetingConfig.set_default_urdf_dir('./assets')
+        elif hand_type == HandType.OMNIHAND:
+            RetargetingConfig.set_default_urdf_dir('./assets')
+        elif hand_type == HandType.OMNIHAND_Unit_Test:
+            RetargetingConfig.set_default_urdf_dir('./assets')
+        elif hand_type == HandType.OMNIHAND_VECTOR:
+            RetargetingConfig.set_default_urdf_dir('./assets')
+        elif hand_type == HandType.OMNIHAND_VECTOR_Unit_Test:
             RetargetingConfig.set_default_urdf_dir('./assets')
 
         config_file_path = Path(hand_type.value)
@@ -102,6 +114,37 @@ class HandRetargeting:
                 # self.right_casia_api_joint_names = ['thumb1', 'thumb2', 'index1', 'middle1', 'ring1', 'little1','index2', 'middle2', 'ring2', 'little2']
                 self.left_dex_retargeting_to_hardware = [ self.left_retargeting_joint_names.index(name) for name in self.left_casia_api_joint_names]
                 self.right_dex_retargeting_to_hardware = [ self.right_retargeting_joint_names.index(name) for name in self.right_casia_api_joint_names]
+            elif hand_type in (
+                HandType.OMNIHAND,
+                HandType.OMNIHAND_Unit_Test,
+                HandType.OMNIHAND_VECTOR,
+                HandType.OMNIHAND_VECTOR_Unit_Test,
+            ):
+                # Only the 12 active joints are commanded. The remaining seven joints
+                # are coupled through URDF mimic tags for retargeting and MJCF equality
+                # constraints in MuJoCo.
+                self.left_omnihand_api_joint_names = [
+                    'L_thumb_roll_joint', 'L_thumb_abad_joint',
+                    'L_thumb_mcp_joint', 'L_thumb_pip_joint',
+                    'L_index_abad_joint', 'L_index_mcp_joint', 'L_index_pip_joint',
+                    'L_middle_abad_joint', 'L_middle_mcp_joint', 'L_middle_pip_joint',
+                    'L_ring_mcp_joint', 'L_pinky_mcp_joint',
+                ]
+                self.right_omnihand_api_joint_names = [
+                    'R_thumb_roll_joint', 'R_thumb_abad_joint',
+                    'R_thumb_mcp_joint', 'R_thumb_pip_joint',
+                    'R_index_abad_joint', 'R_index_mcp_joint', 'R_index_pip_joint',
+                    'R_middle_abad_joint', 'R_middle_mcp_joint', 'R_middle_pip_joint',
+                    'R_ring_mcp_joint', 'R_pinky_mcp_joint',
+                ]
+                self.left_dex_retargeting_to_hardware = [
+                    self.left_retargeting_joint_names.index(name)
+                    for name in self.left_omnihand_api_joint_names
+                ]
+                self.right_dex_retargeting_to_hardware = [
+                    self.right_retargeting_joint_names.index(name)
+                    for name in self.right_omnihand_api_joint_names
+                ]
         except FileNotFoundError:
             logger_mp.warning(f"Configuration file not found: {config_file_path}")
             raise

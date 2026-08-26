@@ -444,11 +444,11 @@ def default_mujoco_model(robot: str, hand: str) -> str:
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Minimal VR wrist/hand teleop for G1 arms and optional Casia hand retargeting."
+        description="VR wrist/hand teleop for G1/X2 arms and optional dexterous-hand retargeting."
     )
     parser.add_argument("--robot", choices=("g1_29", "g1_23", "x2"), default="g1_29")
     parser.add_argument("--backend", choices=("mujoco", "real"), default="mujoco")
-    parser.add_argument("--hand", choices=("none", "casia"), default="none")
+    parser.add_argument("--hand", choices=("none", "casia", "omnihand"), default="none")
     parser.add_argument("--frequency", type=float, default=30.0)
     parser.add_argument(
         "--model",
@@ -479,10 +479,24 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--casia-zmq-right-port", type=int, default=5561)
     parser.add_argument("--casia-zmq-left-real-port", type=int, default=5555)
     parser.add_argument("--casia-zmq-right-real-port", type=int, default=5556)
+    parser.add_argument("--omnihand-zmq-left-port", type=int, default=5560)
+    parser.add_argument("--omnihand-zmq-right-port", type=int, default=5561)
+    parser.add_argument(
+        "--omnihand-retargeting",
+        choices=("dexpilot", "vector"),
+        default="dexpilot",
+        help="OmniHand optimizer: DexPilot contact projection or articulated Vector targets.",
+    )
     return parser
 
 
 def run(args: argparse.Namespace) -> None:
+    if args.backend == "real" and args.hand == "omnihand":
+        raise ValueError(
+            "OmniHand currently supports the MuJoCo backend only; "
+            "the physical-hand SDK mapping has not been implemented."
+        )
+
     from televuer import TeleVuerWrapper
     from teleop.robot_control.robot_arm_ik import G1_23_ArmIK, G1_29_ArmIK, X2_ArmIK
 
@@ -540,6 +554,14 @@ def run(args: argparse.Namespace) -> None:
                 args.casia_zmq_right_port,
                 args.casia_zmq_left_real_port,
                 args.casia_zmq_right_real_port,
+            )
+        elif args.hand == "omnihand":
+            from teleop.robot_control.robot_hand_omnihand import OmniHandController
+
+            hand_bridge = OmniHandController(
+                zmq_left_port=args.omnihand_zmq_left_port,
+                zmq_right_port=args.omnihand_zmq_right_port,
+                retargeting_type=args.omnihand_retargeting,
             )
     except Exception:
         if hand_bridge is not None:
