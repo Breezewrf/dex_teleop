@@ -76,6 +76,7 @@ class OmniHandController:
         self.left_socket.setsockopt(zmq.LINGER, 0)
         self.right_socket.setsockopt(zmq.LINGER, 0)
         self.closed = False
+        self._target_hand_visualization: dict[str, dict] = {}
 
         try:
             self.left_socket.bind(f"tcp://{bind_host}:{zmq_left_port}")
@@ -100,6 +101,7 @@ class OmniHandController:
     def _retarget(self, hand_data: np.ndarray, side: str) -> Optional[np.ndarray]:
         hand_data = np.asarray(hand_data, dtype=np.float64)
         if not self._valid_hand_data(hand_data):
+            getattr(self, "_target_hand_visualization", {}).pop(side, None)
             return None
 
         if side == "left":
@@ -123,6 +125,16 @@ class OmniHandController:
             omnihand_points[indices[1, :]] - omnihand_points[indices[0, :]]
         )
         full_q = retargeting.retarget(reference_vectors)
+        visualizations = getattr(self, "_target_hand_visualization", None)
+        if visualizations is None:
+            visualizations = {}
+            self._target_hand_visualization = visualizations
+        # Build this after retarget() so DexPilot's projected/eta state belongs
+        # to the same frame as the joint target being published.
+        visualizations[side] = self.hand_retargeting.target_hand_visualization(
+            omnihand_points,
+            side,
+        )
         active_q = np.asarray(full_q[mapping], dtype=np.float64)
         if active_q.shape != (12,) or not np.all(np.isfinite(active_q)):
             LOGGER.warning("Ignoring invalid %s OmniHand retarget output", side)
@@ -130,13 +142,21 @@ class OmniHandController:
         return active_q
 
     @staticmethod
-    def _message(qpos: np.ndarray, joint_names: list[str], timestamp: float) -> dict:
-        return {
+    def _message(
+        qpos: np.ndarray,
+        joint_names: list[str],
+        timestamp: float,
+        target_hand: Optional[dict] = None,
+    ) -> dict:
+        message = {
             "timestamp": timestamp,
             "qpos": qpos.tolist(),
             "joint_names": joint_names,
             "type": "sim2sim",
         }
+        if target_hand is not None:
+            message["target_hand"] = target_hand
+        return message
 
     def update(self, tele_data) -> tuple[Optional[np.ndarray], Optional[np.ndarray]]:
         """Retarget and publish each valid hand independently."""
@@ -150,6 +170,7 @@ class OmniHandController:
                     left_q,
                     self.hand_retargeting.left_omnihand_api_joint_names,
                     timestamp,
+                    self._target_hand_visualization.get("left"),
                 )
             )
         if right_q is not None:
@@ -158,6 +179,7 @@ class OmniHandController:
                     right_q,
                     self.hand_retargeting.right_omnihand_api_joint_names,
                     timestamp,
+                    self._target_hand_visualization.get("right"),
                 )
             )
         return left_q, right_q

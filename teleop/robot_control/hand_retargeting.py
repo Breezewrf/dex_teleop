@@ -3,6 +3,7 @@ from pathlib import Path
 import yaml
 from enum import Enum
 import logging_mp
+from teleop.robot_control.target_hand_visualization import build_target_hand_payload
 logger_mp = logging_mp.getLogger(__name__)
 
 class HandType(Enum):
@@ -154,3 +155,24 @@ class HandRetargeting:
         except Exception as e:
             logger_mp.error(f"An error occurred: {e}")
             raise
+
+    def target_hand_visualization(self, hand_points, side: str):
+        """Build a visualization payload from this hand's optimizer config."""
+        if side == "left":
+            retargeting = self.left_retargeting
+        elif side == "right":
+            retargeting = self.right_retargeting
+        else:
+            raise ValueError(f"Unsupported hand side: {side}")
+
+        side_config = self.cfg[side]
+        anchor_body_name = side_config.get("wrist_link_name")
+        if anchor_body_name is None:
+            origin_names = side_config.get("target_origin_link_names") or []
+            anchor_body_name = origin_names[0] if origin_names else None
+        return build_target_hand_payload(
+            hand_points,
+            retargeting,
+            side=side,
+            anchor_body_name=anchor_body_name,
+        )

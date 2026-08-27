@@ -184,6 +184,43 @@ uv run sim2sim/mujoco_receiver.py \
 Then start either retargeting command above in another terminal. `--no-render`
 disables the separate X2 arm viewer so only the OmniHand scene is displayed.
 
+#### VR target-hand visualization
+
+The receiver can overlay the VR target hand on the corresponding simulated
+palm. Add `--target-hand-mode` to either OmniHand playback command:
+
+| Mode | Display | Intended use |
+| --- | --- | --- |
+| `landmarks` | 25 landmark spheres | Inspect tracking jitter, jumps, and invalid points |
+| `skeleton` | 25 spheres and the complete human-hand skeleton | Compare the raw human pose with the dex hand |
+| `constraints` | 25 spheres and the vectors actually passed to the optimizer | Inspect Vector/DexPilot objectives and DexPilot contact projection |
+| `none` (default) | No overlay | Normal playback with no visualization overhead |
+
+For example:
+
+```sh
+uv run sim2sim/mujoco_receiver.py \
+  --xml-path assets/o12_hand_description-o12_t3/assets/MJCF/scene.xml \
+  --subscribe-both \
+  --control-mode kinematic-coupled \
+  --target-hand-mode constraints \
+  --smoothing-alpha 1.0 \
+  --interpol-steps 1
+```
+
+Left-hand geometry is cyan and right-hand geometry is orange. In
+`constraints` mode, a red vector means DexPilot replaced the measured human
+distance with its current projected contact distance (the eta1/eta2 contact
+target). Non-red vectors are the scaled human reference vectors.
+
+The overlay protocol is model-independent. The sender provides the 25 points,
+the optimizer's `target_link_human_indices`, actual scaled/projected vectors,
+and an optional palm anchor. The receiver first uses that anchor and otherwise
+infers the common MuJoCo ancestor of the commanded joints. OmniHand and CASIA
+publish this payload now; other dex-hand controllers can reuse
+`HandRetargeting.target_hand_visualization()` after applying their own input
+coordinate conversion and calling `retarget()`.
+
 Recommended combinations:
 
 | Goal | Retargeting | Playback |

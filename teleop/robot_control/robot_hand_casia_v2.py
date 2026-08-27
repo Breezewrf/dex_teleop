@@ -78,6 +78,8 @@ class Casia_Controller:
         right_q_target = np.full(CASIA_Num_Motors, 0)
         left_q_target_real = np.full(CASIA_Num_Motors_Real, 0)
         right_q_target_real = np.full(CASIA_Num_Motors_Real, 0)
+        left_target_hand = None
+        right_target_hand = None
 
         # joint_names = ['index1', 'index2', 'index3', 'little1', 'little2', 'little3', 'middle1', 'middle2', 'middle3', 'ring1', 'ring2', 'ring3', 'thumb1', 'thumb2']
         # joint_names_real = ['thumb1', 'thumb2', 'index1', 'middle1', 'ring1', 'little1','index2', 'middle2', 'ring2', 'little2']
@@ -133,13 +135,26 @@ class Casia_Controller:
                     left_hand_data  = np.array(left_hand_array_in[:]).reshape(25, 3).copy()
                 with right_hand_array_in.get_lock():
                     right_hand_data = np.array(right_hand_array_in[:]).reshape(25, 3).copy()
-                
+
+                left_target_hand = None
+                right_target_hand = None
                 if not np.all(right_hand_data == 0.0) and not np.all(left_hand_data[4] == np.array([-1.13, 0.3, 0.15])): # if hand data has been initialized.
                     ref_left_value = left_hand_data[self.hand_retargeting.left_indices[1,:]] - left_hand_data[self.hand_retargeting.left_indices[0,:]]
                     ref_right_value = right_hand_data[self.hand_retargeting.right_indices[1,:]] - right_hand_data[self.hand_retargeting.right_indices[0,:]]
 
                     left_q_target  = self.hand_retargeting.left_retargeting.retarget(ref_left_value)[self.hand_retargeting.left_dex_retargeting_to_hardware]
                     right_q_target = self.hand_retargeting.right_retargeting.retarget(ref_right_value)[self.hand_retargeting.right_dex_retargeting_to_hardware]
+                    # Keep visualization in the exact landmark frame used by
+                    # CASIA's optimizer. This same helper also supports other
+                    # dex hands without hard-coded link or constraint lists.
+                    left_target_hand = self.hand_retargeting.target_hand_visualization(
+                        left_hand_data,
+                        "left",
+                    )
+                    right_target_hand = self.hand_retargeting.target_hand_visualization(
+                        right_hand_data,
+                        "right",
+                    )
                  
                     # Thumb_2 need abs() for sim2real
                     left_q_target_real = np.abs(left_q_target[left_robot_to_real_mapping])
@@ -175,7 +190,8 @@ class Casia_Controller:
                         "timestamp": timestamp,
                         "qpos": left_q_target.tolist(),
                         "joint_names": left_joint_names,
-                        "type": "sim2sim"
+                        "type": "sim2sim",
+                        "target_hand": left_target_hand,
                     }
                     left_socket.send(json.dumps(data_left).encode("utf-8"))
 
@@ -183,7 +199,8 @@ class Casia_Controller:
                         "timestamp": timestamp,
                         "qpos": right_q_target.tolist(),
                         "joint_names": right_joint_names,
-                        "type": "sim2sim"
+                        "type": "sim2sim",
+                        "target_hand": right_target_hand,
                     }
                     right_socket.send(json.dumps(data_right).encode("utf-8"))
 

@@ -130,6 +130,13 @@ class OmniHandRetargetingTest(unittest.TestCase):
         self.assertEqual(right_q.shape, (12,))
         self.assertTrue(np.all(np.isfinite(left_q)))
         self.assertTrue(np.all(np.isfinite(right_q)))
+        for side in ("left", "right"):
+            payload = controller._target_hand_visualization[side]
+            self.assertEqual(np.asarray(payload["landmarks"]).shape, (25, 3))
+            self.assertEqual(len(payload["skeleton_edges"]), 24)
+            self.assertEqual(len(payload["constraint_vectors"]), 15)
+            self.assertEqual(len(payload["constraint_projected"]), 15)
+            np.testing.assert_allclose(payload["landmarks"][0], np.zeros(3))
 
     def test_cli_accepts_omnihand(self):
         args = build_arg_parser().parse_args(
@@ -163,6 +170,33 @@ class OmniHandRetargetingTest(unittest.TestCase):
             ]
             self.assertEqual(active_q.shape, (12,))
             self.assertTrue(np.all(np.isfinite(active_q)))
+            payload = vector_retargeting.target_hand_visualization(
+                np.zeros((25, 3), dtype=np.float64),
+                side,
+            )
+            self.assertEqual(payload["optimizer_type"], "vector")
+            self.assertEqual(len(payload["constraint_vectors"]), 30)
+            self.assertEqual(len(payload["constraint_projected"]), 30)
+
+    def test_visualization_payload_is_config_driven_for_casia(self):
+        casia = HandRetargeting(HandType.CASIA_HAND)
+        landmarks = np.zeros((25, 3), dtype=np.float64)
+        for finger_start in (0, 5, 10, 15, 20):
+            for segment in range(1, 5):
+                landmarks[finger_start + segment] = [
+                    0.01 * finger_start,
+                    0.02 * segment,
+                    0.005 * segment,
+                ]
+        indices = casia.left_indices
+        references = landmarks[indices[1]] - landmarks[indices[0]]
+        casia.left_retargeting.retarget(references)
+        payload = casia.target_hand_visualization(landmarks, "left")
+        self.assertEqual(payload["anchor_body_name"], "left_base_link")
+        self.assertEqual(
+            len(payload["constraint_vectors"]),
+            casia.left_indices.shape[1],
+        )
 
 
 class OmniHandMujocoTest(unittest.TestCase):
@@ -223,6 +257,54 @@ class OmniHandMujocoTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.receiver.update_target_qpos(
                 np.array([np.nan]),
+                ["L_index_pip_joint"],
+            )
+
+    def test_target_hand_three_render_modes_and_anchor(self):
+        retargeting = HandRetargeting(HandType.OMNIHAND)
+        landmarks = np.zeros((25, 3), dtype=np.float64)
+        for finger_start in (0, 5, 10, 15, 20):
+            for segment in range(1, 5):
+                landmarks[finger_start + segment] = [
+                    0.01 * finger_start,
+                    0.02 * segment,
+                    0.005 * segment,
+                ]
+        indices = retargeting.left_indices
+        omni_points = unitree_to_omnihand_points(landmarks)
+        references = omni_points[indices[1]] - omni_points[indices[0]]
+        retargeting.left_retargeting.retarget(references)
+        payload = retargeting.target_hand_visualization(
+            omni_points,
+            "left",
+        )
+        joint_names = retargeting.left_omnihand_api_joint_names
+        self.receiver.update_target_hand(payload, joint_names)
+        anchor_id = self.receiver.target_hand_payloads[0]["anchor_body_id"]
+        self.assertEqual(
+            mujoco.mj_id2name(
+                self.receiver.model,
+                mujoco.mjtObj.mjOBJ_BODY,
+                anchor_id,
+            ),
+            "L_palm",
+        )
+
+        scene = mujoco.MjvScene(self.receiver.model, maxgeom=100)
+        self.receiver.target_hand_mode = "landmarks"
+        self.receiver.render_target_hands(scene)
+        self.assertEqual(scene.ngeom, 25)
+        self.receiver.target_hand_mode = "skeleton"
+        self.receiver.render_target_hands(scene)
+        self.assertEqual(scene.ngeom, 25 + 24)
+        self.receiver.target_hand_mode = "constraints"
+        self.receiver.render_target_hands(scene)
+        self.assertEqual(scene.ngeom, 25 + 15)
+
+    def test_invalid_target_hand_payload_is_rejected(self):
+        with self.assertRaises(ValueError):
+            self.receiver.update_target_hand(
+                {"side": "left", "landmarks": [[0.0, 0.0, 0.0]]},
                 ["L_index_pip_joint"],
             )
 
