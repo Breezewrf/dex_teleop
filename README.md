@@ -1,7 +1,7 @@
 # dex_teleop
 A Lightweight XR-based teleoperation for dexterous robot hands and humanoid arms.
 
-The system receives hand and wrist tracking data from a Meta Quest headset, retargets the upper motion to the robot, and sends commands to either a MuJoCo simulation or physical hardware.
+The system receives hand and wrist tracking data from a Meta Quest 3 headset, retargets the upper motion to the robot, and sends commands to either a MuJoCo simulation or physical hardware.
 
 ## System Overview
 ```
@@ -76,152 +76,139 @@ uv run teleop/televuer/example/test_tv_wrapper.py
 ```
 
 ## Sim2Sim
-- G1 Arm Teleop:
+
+### Integrated Arm + Hand Teleop
+
+The unified entry point controls the robot arms and dexterous hands together.
+This is the recommended and most commonly used workflow. A separate
+`mujoco_receiver.py` is not required.
+
 ```sh
-python teleop/robot_control/vr_arm_hand_teleop.py --backend mujoco --hand casia --robot g1_23
+# X2 arm with OmniHand using DexPilot
+python teleop/robot_control/vr_arm_hand_teleop.py \
+  --backend mujoco \
+  --robot x2 \
+  --hand omnihand \
+  --omnihand-retargeting dexpilot
+
+# X2 arm with OmniHand using Vector
+python teleop/robot_control/vr_arm_hand_teleop.py \
+  --backend mujoco \
+  --robot x2 \
+  --hand omnihand \
+  --omnihand-retargeting vector
+
+# G1 arm with CASIA hands
+python teleop/robot_control/vr_arm_hand_teleop.py \
+  --backend mujoco \
+  --robot g1_23 \
+  --hand casia
 ```
 
-- X2 Arm Teleop:
+In the integrated viewer, X2 writes the 12 active OmniHand joints and
+evaluates the 7 passive-joint polynomials. CASIA writes all 14 joints per
+hand directly. `--mujoco-control {kinematic,pd}` controls the robot arms; it is
+separate from the standalone hand receiver's `--control-mode`.
+
+### Standalone hand simulation
+
+Standalone hand teleoperation only initializes VR hand tracking and hand
+retargeting. It does not initialize G1/X2 arm IK. Run the MuJoCo receiver and
+the corresponding hand controller in separate terminals.
+
+#### Standalone OmniHand
+
+Start the dual-hand OmniHand MuJoCo scene. `kinematic-coupled` evaluates the
+MJCF passive-joint polynomials immediately for low-latency playback:
+
 ```sh
-python teleop/robot_control/vr_arm_hand_teleop.py --backend mujoco --hand none --robot x2
+uv run sim2sim/mujoco_receiver.py \
+  --xml-path assets/o12_hand_description-o12_t3/assets/MJCF/scene.xml \
+  --subscribe-both \
+  --control-mode kinematic-coupled \
+  --smoothing-alpha 1.0 \
+  --interpol-steps 1
 ```
 
-For Dex hand, current only support CASIA hand
+Then start hand-only OmniHand retargeting in another terminal:
+
 ```sh
-# Sim of left hand
-uv run sim2sim/mujoco_receiver.py --xml-path assets/casia_hand_M/casia_left_hand.xml
+# DexPilot is the default
+uv run teleop/robot_control/robot_hand_omnihand.py
 
-# Sim of right hand
-uv run sim2sim/mujoco_receiver.py --xml-path assets/casia_hand_M/casia_right_hand.xml
+# Or use Vector retargeting
+uv run teleop/robot_control/robot_hand_omnihand.py --retargeting vector
+```
 
-# Sim of both hands
-uv run sim2sim/mujoco_receiver.py --xml-path assets/casia_hand_M/casia_left_hand.xml,assets/casia_hand_M/casia_right_hand.xml
+#### Standalone CASIA
 
-# Teleop
+Start one of the CASIA MuJoCo scenes:
+
+```sh
+# Left hand only
+uv run sim2sim/mujoco_receiver.py \
+  --xml-path assets/casia_hand_M/casia_left_hand.xml \
+  --control-mode qpos
+
+# Right hand only
+uv run sim2sim/mujoco_receiver.py \
+  --xml-path assets/casia_hand_M/casia_right_hand.xml \
+  --control-mode qpos
+
+# Both hands
+uv run sim2sim/mujoco_receiver.py \
+  --xml-path assets/casia_hand_M/casia_left_hand.xml,assets/casia_hand_M/casia_right_hand.xml \
+  --subscribe-both \
+  --control-mode qpos
+```
+
+Then start the hand-only CASIA controller in another terminal:
+
+```sh
 uv run teleop/robot_control/robot_hand_casia_v2.py
-
 ```
 
-### OmniHandPro VR Retargeting
+### Retargeting optimizers
 
-OmniHandPro is simulated as a separate dual-hand MuJoCo scene. The VR
-retargeter publishes only the 12 active joints per hand. The remaining seven
-joint coordinates are passive:
+Retargeting converts the 25 XR landmarks into robot-hand joint targets. It is
+independent of the MuJoCo playback mode.
 
-- thumb DIP follows thumb PIP;
-- index and middle DIP follow their PIP joints;
-- ring and pinky PIP/DIP follow their MCP joints.
+| Hand | Available optimizer | Standalone option | Integrated option |
+| --- | --- | --- | --- |
+| OmniHand | DexPilot (default), Vector | `--retargeting` | `--omnihand-retargeting` |
+| CASIA | DexPilot | Fixed by `casia.yml` | Fixed by `casia.yml` |
 
-The URDF mimic adaptor is used during retargeting, while playback uses the
-nonlinear polynomial mappings defined by the MJCF.
-
-#### Retargeting modes
-
-`--omnihand-retargeting` selects how the 25 XR hand landmarks are converted to
-the 12 active OmniHand targets. This is independent of the MuJoCo control mode.
+The two OmniHand optimizers use different target information:
 
 | Mode | Target information | Advantages | Limitations |
 | --- | --- | --- | --- |
-| `dexpilot` (default) | Wrist-to-tip and fingertip-to-fingertip vectors | Stable pinch/grasp contact; DexPilot contact projection helps fingertips meet | Intermediate human finger joints are not directly constrained; contact projection has hysteresis |
-| `vector` | 20 finger-chain vectors and 10 fingertip-pair vectors | MCP/PIP/DIP segment shape contributes to the optimization; usually better articulated poses | No DexPilot contact projection, so fingertip contact can be less sticky; more sensitive to human/robot proportions |
+| `dexpilot` | Wrist-to-tip and fingertip-to-fingertip vectors | Stable pinch/grasp contact; contact projection helps fingertips meet | Intermediate human finger joints are not directly constrained; contact projection has hysteresis |
+| `vector` | 20 finger-chain vectors and 10 fingertip-pair vectors | MCP/PIP/DIP segment shape contributes to optimization; usually better articulated poses | No contact projection, so fingertip contact can be less sticky; more sensitive to human/robot proportions |
 
-Start DexPilot retargeting:
+OmniHand publishes 12 active joints per hand. Its remaining seven joint
+coordinates are passive: thumb DIP follows thumb PIP; index and middle DIP
+follow their PIP joints; and ring/pinky PIP and DIP follow their MCP joints.
+The URDF mimic adaptor represents these joints during retargeting, while the
+MJCF contains the nonlinear polynomial mappings used for playback.
 
-```sh
-python teleop/robot_control/vr_arm_hand_teleop.py \
-  --backend mujoco \
-  --robot x2 \
-  --hand omnihand \
-  --omnihand-retargeting dexpilot \
-  --no-render
-```
+### MuJoCo standalone playback modes
 
-Start Vector retargeting:
+`--control-mode` belongs to `sim2sim/mujoco_receiver.py`. It controls how a
+standalone MuJoCo hand follows received joint targets and does not select the
+retarget optimizer.
 
-```sh
-python teleop/robot_control/vr_arm_hand_teleop.py \
-  --backend mujoco \
-  --robot x2 \
-  --hand omnihand \
-  --omnihand-retargeting vector \
-  --no-render
-```
-
-#### MuJoCo playback modes
-
-`--control-mode` belongs to `sim2sim/mujoco_receiver.py` and controls how the
-received targets are played. It does not change the retarget optimizer.
-
-| Mode | Active joints | Passive joints | Intended use |
+| Mode | Behavior | OmniHand | CASIA |
 | --- | --- | --- | --- |
-| `position-actuator` | Sent to MuJoCo position actuators | Solved by MuJoCo equality constraints during `mj_step()` | Dynamics, actuator force limits, damping, contacts and physically meaningful response |
-| `kinematic-coupled` | Written directly to `qpos` | Evaluated directly from the compiled MJCF equality polynomials, followed by `mj_forward()` | Low-latency retarget visualization and pose debugging |
-| `qpos` (legacy default) | Written directly to `qpos` | Not explicitly reconstructed before stepping | CASIA and models whose commanded joint set already contains every displayed joint; not recommended for OmniHand |
+| `qpos` | Writes every commanded joint directly to `qpos` | Legacy mode; passive joints are not explicitly reconstructed before stepping | Recommended; all 14 displayed joints are commanded |
+| `kinematic-coupled` | Writes active joints to `qpos`, evaluates compiled equality polynomials, then calls `mj_forward()` | Recommended for low-latency visualization and pose debugging | Works like direct `qpos` because CASIA has no coupled equalities |
+| `position-actuator` | Sends targets to MuJoCo position actuators and advances with `mj_step()` | Use for actuator limits, damping, contacts and physical response | Not supported by the current actuator-free standalone CASIA XMLs |
 
-For physics playback, start the receiver in one terminal:
+`position-actuator` is intentionally slower because actuator `forcerange`,
+joint damping, contacts and one actuator driving multiple coupled joints all
+affect the response. `kinematic-coupled` preserves OmniHand's nonlinear pose
+mapping but intentionally bypasses those physical effects.
 
-```sh
-uv run sim2sim/mujoco_receiver.py \
-  --xml-path assets/o12_hand_description-o12_t3/assets/MJCF/scene.xml \
-  --subscribe-both \
-  --control-mode position-actuator
-```
-
-This mode is intentionally slower: actuator `forcerange`, joint damping,
-contacts and one actuator driving multiple coupled joints all affect response.
-
-For low-latency visualization, start the kinematic coupled receiver instead:
-
-```sh
-uv run sim2sim/mujoco_receiver.py \
-  --xml-path assets/o12_hand_description-o12_t3/assets/MJCF/scene.xml \
-  --subscribe-both \
-  --control-mode kinematic-coupled \
-  --smoothing-alpha 1.0 \
-  --interpol-steps 1
-```
-
-Then start either retargeting command above in another terminal. `--no-render`
-disables the separate X2 arm viewer so only the OmniHand scene is displayed.
-
-#### VR target-hand visualization
-
-The receiver can overlay the VR target hand on the corresponding simulated
-palm. Add `--target-hand-mode` to either OmniHand playback command:
-
-| Mode | Display | Intended use |
-| --- | --- | --- |
-| `landmarks` | 25 landmark spheres | Inspect tracking jitter, jumps, and invalid points |
-| `skeleton` | 25 spheres and the complete human-hand skeleton | Compare the raw human pose with the dex hand |
-| `constraints` | 25 spheres and the vectors actually passed to the optimizer | Inspect Vector/DexPilot objectives and DexPilot contact projection |
-| `none` (default) | No overlay | Normal playback with no visualization overhead |
-
-For example:
-
-```sh
-uv run sim2sim/mujoco_receiver.py \
-  --xml-path assets/o12_hand_description-o12_t3/assets/MJCF/scene.xml \
-  --subscribe-both \
-  --control-mode kinematic-coupled \
-  --target-hand-mode constraints \
-  --smoothing-alpha 1.0 \
-  --interpol-steps 1
-```
-
-Left-hand geometry is cyan and right-hand geometry is orange. In
-`constraints` mode, a red vector means DexPilot replaced the measured human
-distance with its current projected contact distance (the eta1/eta2 contact
-target). Non-red vectors are the scaled human reference vectors.
-
-The overlay protocol is model-independent. The sender provides the 25 points,
-the optimizer's `target_link_human_indices`, actual scaled/projected vectors,
-and an optional palm anchor. The receiver first uses that anchor and otherwise
-infers the common MuJoCo ancestor of the commanded joints. OmniHand and CASIA
-publish this payload now; other dex-hand controllers can reuse
-`HandRetargeting.target_hand_visualization()` after applying their own input
-coordinate conversion and calling `retarget()`.
-
-Recommended combinations:
+Recommended OmniHand combinations:
 
 | Goal | Retargeting | Playback |
 | --- | --- | --- |
@@ -229,45 +216,60 @@ Recommended combinations:
 | Pinch/OK/contact-oriented visualization | `dexpilot` | `kinematic-coupled` |
 | Evaluate physical response and coupling dynamics | `dexpilot` or `vector` | `position-actuator` |
 
-#### Tuning and known limitations
+### VR target-hand visualization
 
-- Both retarget configs currently use `low_pass_alpha: 0.2`. The receiver also
-  defaults to `--smoothing-alpha 0.2`; using both creates two cascaded filters.
-  For responsive kinematic playback, keep the retarget filter and use
-  `--smoothing-alpha 1.0 --interpol-steps 1` on the receiver.
-- `scaling_factor` is an isotropic scale: it changes finger length and lateral
-  finger spacing together. Human and OmniHand proportions are different, so a
-  value that matches finger length may still bias an ABAD joint.
-- The active joint message order places `middle_abad_joint` at index 7. For the
-  left hand, a persistent negative value turns the middle finger toward the
-  ring finger; for the right hand, the corresponding direction is positive.
-- Ring and pinky each have only one active flexion joint. Their PIP/DIP poses
-  must remain on the MJCF coupling curve and cannot reproduce arbitrary human
-  MCP/PIP/DIP combinations.
-- `kinematic-coupled` preserves the nonlinear pose mapping but intentionally
-  bypasses actuator force limits, dynamics and contact response. Use
-  `position-actuator` whenever those effects matter.
+`mujoco_receiver.py` can overlay the VR target hand on the corresponding
+simulated palm. This protocol is supported by both CASIA and OmniHand. Add
+`--target-hand-mode` to a standalone receiver command:
 
-Example: Vector retargeting with low-latency coupled playback uses these two
-commands in separate terminals:
+| Mode | Display | Intended use |
+| --- | --- | --- |
+| `landmarks` | 25 landmark spheres | Inspect tracking jitter, jumps and invalid points |
+| `skeleton` | 25 spheres and the complete human-hand skeleton | Compare the raw human pose with the dex hand |
+| `constraints` | 25 spheres and the vectors passed to the optimizer | Inspect Vector/DexPilot objectives and DexPilot contact projection |
+| `none` (default) | No overlay | Normal playback with no visualization overhead |
+
+For example:
 
 ```sh
+# OmniHand target constraints
 uv run sim2sim/mujoco_receiver.py \
   --xml-path assets/o12_hand_description-o12_t3/assets/MJCF/scene.xml \
   --subscribe-both \
   --control-mode kinematic-coupled \
-  --smoothing-alpha 1.0 \
-  --interpol-steps 1
+  --target-hand-mode constraints
+
+# CASIA target constraints
+uv run sim2sim/mujoco_receiver.py \
+  --xml-path assets/casia_hand_M/casia_left_hand.xml,assets/casia_hand_M/casia_right_hand.xml \
+  --subscribe-both \
+  --control-mode qpos \
+  --target-hand-mode constraints
 ```
 
-```sh
-python teleop/robot_control/vr_arm_hand_teleop.py \
-  --backend mujoco \
-  --robot x2 \
-  --hand omnihand \
-  --omnihand-retargeting vector \
-  --no-render
-```
+Left-hand geometry is cyan and right-hand geometry is orange. In
+`constraints` mode, **a red vector means DexPilot replaced the measured human
+distance with its projected eta1/eta2 contact target**. Non-red vectors are the
+scaled human reference vectors.
+
+The sender provides the landmarks, optimizer indices, scaled/projected vectors
+and an optional palm anchor. Other dex-hand controllers can reuse
+`HandRetargeting.target_hand_visualization()` after applying their own input
+coordinate conversion and calling `retarget()`.
+
+The CASIA and OmniHand controllers used by `vr_arm_hand_teleop.py` also publish
+this payload. An external `mujoco_receiver.py` can display it, but the
+integrated G1/X2 viewer does not currently render the target-hand overlay.
+
+### OmniHand tuning and known limitations
+
+- Ring and pinky each have only one active flexion joint. Their PIP/DIP poses
+  must remain on the MJCF coupling curve and cannot reproduce arbitrary human
+  MCP/PIP/DIP combinations.
+- `kinematic-coupled` preserves the nonlinear pose mapping but bypasses
+  actuator force limits, dynamics and contact response. Use
+  `position-actuator` whenever those effects matter.
+
 
 ## Sim2Real
 - G1 Arm Teleop:

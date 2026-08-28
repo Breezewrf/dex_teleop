@@ -1,11 +1,21 @@
 """VR hand retargeting and ZMQ publishing for OmniHandPro simulation."""
 
+import argparse
 import logging
+import os
+import signal
+import sys
 import time
 from typing import Optional
 
 import numpy as np
 import zmq
+
+
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(CURRENT_DIR))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 from teleop.robot_control.hand_retargeting import HandRetargeting, HandType
 
@@ -191,3 +201,107 @@ class OmniHandController:
         self.left_socket.close()
         self.right_socket.close()
         self.context.term()
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    """Build the hand-only OmniHand teleoperation CLI."""
+    parser = argparse.ArgumentParser(
+        description="Standalone VR teleoperation for dual OmniHandPro hands."
+    )
+    parser.add_argument(
+        "--retargeting",
+        choices=("dexpilot", "vector"),
+        default="dexpilot",
+        help="Hand retargeting optimizer (default: dexpilot).",
+    )
+    parser.add_argument("--frequency", type=float, default=30.0)
+    parser.add_argument("--zmq-left-port", type=int, default=5560)
+    parser.add_argument("--zmq-right-port", type=int, default=5561)
+    parser.add_argument(
+        "--bind-host",
+        default="*",
+        help="ZMQ publisher bind host (default: all interfaces).",
+    )
+    parser.add_argument(
+        "--connect-delay",
+        type=float,
+        default=0.5,
+        help="Seconds to wait after binding publishers (default: 0.5).",
+    )
+    parser.add_argument(
+        "--start-immediately",
+        action="store_true",
+        help="Start tracking without waiting for Enter.",
+    )
+    return parser
+
+
+def run_standalone(args: argparse.Namespace) -> None:
+    """Run VR-to-OmniHand retargeting without initializing a robot arm."""
+    if args.frequency <= 0.0:
+        raise ValueError(f"frequency must be positive, got {args.frequency}")
+    if args.connect_delay < 0.0:
+        raise ValueError(
+            f"connect-delay must be non-negative, got {args.connect_delay}"
+        )
+
+    from televuer import TeleVuerWrapper
+
+    stop = False
+
+    def request_stop(signum, frame):
+        nonlocal stop
+        stop = True
+
+    signal.signal(signal.SIGINT, request_stop)
+    signal.signal(signal.SIGTERM, request_stop)
+
+    tv_wrapper = None
+    controller = None
+    try:
+        tv_wrapper = TeleVuerWrapper(
+            use_hand_tracking=True,
+            binocular=True,
+            img_shape=(480, 1280),
+            display_fps=args.frequency,
+            display_mode="pass-through",
+        )
+        controller = OmniHandController(
+            zmq_left_port=args.zmq_left_port,
+            zmq_right_port=args.zmq_right_port,
+            bind_host=args.bind_host,
+            connect_delay=args.connect_delay,
+            retargeting_type=args.retargeting,
+        )
+
+        if not args.start_immediately:
+            input("Press Enter to start OmniHand VR tracking. Press Ctrl+C to stop.\n")
+
+        period = 1.0 / args.frequency
+        LOGGER.info(
+            "Started standalone OmniHand teleop with retargeting=%s",
+            args.retargeting,
+        )
+        while not stop:
+            start = time.monotonic()
+            tele_data = tv_wrapper.get_tele_data()
+            if tele_data is not None:
+                controller.update(tele_data)
+            time.sleep(max(0.0, period - (time.monotonic() - start)))
+    finally:
+        if controller is not None:
+            controller.close()
+        if tv_wrapper is not None:
+            tv_wrapper.close()
+
+
+def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    )
+    run_standalone(build_arg_parser().parse_args())
+
+
+if __name__ == "__main__":
+    main()

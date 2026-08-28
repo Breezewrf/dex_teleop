@@ -10,13 +10,19 @@ from teleop.robot_control.hand_retargeting import HandRetargeting, HandType
 from teleop.robot_control.robot_hand_omnihand import (
     UNITREE_TO_OMNIHAND_ROTATION,
     OmniHandController,
+    build_arg_parser as build_omnihand_arg_parser,
     unitree_to_omnihand_points,
 )
-from teleop.robot_control.vr_arm_hand_teleop import build_arg_parser
+from teleop.robot_control.vr_arm_hand_teleop import (
+    MujocoG1ArmController,
+    build_arg_parser,
+    default_mujoco_model,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCENE_PATH = PROJECT_ROOT / "assets/o12_hand_description-o12_t3/assets/MJCF/scene.xml"
+X2_OMNIHAND_PATH = PROJECT_ROOT / "assets/X2/x2_ultra_omnihand.xml"
 
 
 class OmniHandRetargetingTest(unittest.TestCase):
@@ -151,6 +157,29 @@ class OmniHandRetargetingTest(unittest.TestCase):
         )
         self.assertEqual(args.hand, "omnihand")
         self.assertEqual(args.omnihand_retargeting, "vector")
+
+    def test_standalone_cli_accepts_omnihand_options(self):
+        args = build_omnihand_arg_parser().parse_args(
+            [
+                "--retargeting",
+                "vector",
+                "--frequency",
+                "60",
+                "--zmq-left-port",
+                "6000",
+                "--zmq-right-port",
+                "6001",
+                "--bind-host",
+                "127.0.0.1",
+                "--start-immediately",
+            ]
+        )
+        self.assertEqual(args.retargeting, "vector")
+        self.assertEqual(args.frequency, 60.0)
+        self.assertEqual(args.zmq_left_port, 6000)
+        self.assertEqual(args.zmq_right_port, 6001)
+        self.assertEqual(args.bind_host, "127.0.0.1")
+        self.assertTrue(args.start_immediately)
 
     def test_vector_config_builds_with_intermediate_links(self):
         vector_retargeting = HandRetargeting(HandType.OMNIHAND_VECTOR)
@@ -352,6 +381,105 @@ class OmniHandMujocoTest(unittest.TestCase):
             self.assertAlmostEqual(qpos("L_ring_dip_joint"), 0.0)
         finally:
             receiver.close()
+
+
+class X2OmniHandIntegrationTest(unittest.TestCase):
+    def test_x2_omnihand_is_the_default_integrated_model(self):
+        self.assertEqual(
+            Path(default_mujoco_model("x2", "omnihand")).resolve(),
+            X2_OMNIHAND_PATH.resolve(),
+        )
+
+    def test_hands_are_centered_and_oriented_along_x2_wrists(self):
+        model = mujoco.MjModel.from_xml_path(str(X2_OMNIHAND_PATH))
+        data = mujoco.MjData(model)
+        data.qpos[0:3] = [0.0, 0.0, 0.68]
+        data.qpos[3:7] = [1.0, 0.0, 0.0, 0.0]
+        mujoco.mj_forward(model, data)
+
+        for side, palm_name, inward_sign in (
+            ("left", "x2_left_L_palm", -1.0),
+            ("right", "x2_right_R_palm", 1.0),
+        ):
+            wrist_id = mujoco.mj_name2id(
+                model, mujoco.mjtObj.mjOBJ_BODY, f"{side}_wrist_roll_link"
+            )
+            palm_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, palm_name)
+            wrist_rotation = data.xmat[wrist_id].reshape(3, 3)
+            palm_rotation = data.xmat[palm_id].reshape(3, 3)
+            wrist_to_palm = wrist_rotation.T @ (
+                data.xpos[palm_id] - data.xpos[wrist_id]
+            )
+            np.testing.assert_allclose(wrist_to_palm, [0.0, 0.0, -0.0415], atol=1e-8)
+            self.assertAlmostEqual(
+                float(np.dot(palm_rotation[:, 2], -wrist_rotation[:, 2])),
+                1.0,
+            )
+            self.assertAlmostEqual(
+                float(
+                    np.dot(
+                        palm_rotation[:, 0],
+                        inward_sign * wrist_rotation[:, 1],
+                    )
+                ),
+                1.0,
+            )
+        self.assertEqual(data.ncon, 0)
+
+    def test_integrated_controller_applies_passive_joint_polynomial(self):
+        controller = MujocoG1ArmController(
+            str(X2_OMNIHAND_PATH),
+            joint_names=(
+                "left_shoulder_pitch_joint",
+                "left_shoulder_roll_joint",
+                "left_shoulder_yaw_joint",
+                "left_elbow_joint",
+                "left_wrist_yaw_joint",
+                "left_wrist_pitch_joint",
+                "left_wrist_roll_joint",
+                "right_shoulder_pitch_joint",
+                "right_shoulder_roll_joint",
+                "right_shoulder_yaw_joint",
+                "right_elbow_joint",
+                "right_wrist_yaw_joint",
+                "right_wrist_pitch_joint",
+                "right_wrist_roll_joint",
+            ),
+            render=False,
+            enable_omnihand_hand=True,
+        )
+        try:
+            self.assertEqual(len(controller.omnihand_coupled_equalities), 14)
+            left_q = np.zeros(12)
+            left_q[10] = 0.8
+            controller.set_omnihand_q(left_q, None)
+
+            def qpos(name: str) -> float:
+                joint_id = mujoco.mj_name2id(
+                    controller.model, mujoco.mjtObj.mjOBJ_JOINT, name
+                )
+                return float(
+                    controller.data.qpos[controller.model.jnt_qposadr[joint_id]]
+                )
+
+            mcp = qpos("x2_left_L_ring_mcp_joint")
+            expected_pip = (
+                0.7869 * mcp
+                + 0.3884 * mcp**2
+                - 0.4545 * mcp**3
+                + 0.1578 * mcp**4
+            )
+            expected_dip = (
+                0.899 * mcp
+                + 0.3138 * mcp**2
+                - 0.1728 * mcp**3
+                - 0.03666 * mcp**4
+            )
+            self.assertAlmostEqual(mcp, 0.8)
+            self.assertAlmostEqual(qpos("x2_left_L_ring_pip_joint"), expected_pip)
+            self.assertAlmostEqual(qpos("x2_left_L_ring_dip_joint"), expected_dip)
+        finally:
+            controller.close()
 
 
 if __name__ == "__main__":
