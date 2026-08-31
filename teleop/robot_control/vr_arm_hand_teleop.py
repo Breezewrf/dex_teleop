@@ -147,11 +147,11 @@ class ArmState:
     dq: np.ndarray
 
 
-class MujocoG1ArmController:
+class MujocoArmHandController:
     def __init__(
         self,
         model_path: str,
-        joint_names: Iterable[str] = G1_29_ARM_JOINT_NAMES,
+        joint_names: Iterable[str],
         base_pos: Optional[np.ndarray] = None,
         render: bool = True,
         control_mode: str = "kinematic",
@@ -601,7 +601,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--model",
         default=None,
-        help="MuJoCo XML path. Defaults to a G1 model matching --robot/--hand.",
+        help="MuJoCo XML path. Defaults to an integrated model matching --robot/--hand.",
     )
     parser.add_argument("--no-render", action="store_true", help="Disable MuJoCo passive viewer.")
     parser.add_argument(
@@ -629,6 +629,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--casia-zmq-right-real-port", type=int, default=5556)
     parser.add_argument("--omnihand-zmq-left-port", type=int, default=5560)
     parser.add_argument("--omnihand-zmq-right-port", type=int, default=5561)
+    parser.add_argument("--omnihand-zmq-left-real-port", type=int, default=5555)
+    parser.add_argument("--omnihand-zmq-right-real-port", type=int, default=5556)
     parser.add_argument(
         "--omnihand-retargeting",
         choices=("dexpilot", "vector"),
@@ -639,12 +641,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 
 def run(args: argparse.Namespace) -> None:
-    if args.backend == "real" and args.hand == "omnihand":
-        raise ValueError(
-            "OmniHand currently supports the MuJoCo backend only; "
-            "the physical-hand SDK mapping has not been implemented."
-        )
-
     from televuer import TeleVuerWrapper
     from teleop.robot_control.robot_arm_ik import G1_23_ArmIK, G1_29_ArmIK, X2_ArmIK
 
@@ -674,7 +670,7 @@ def run(args: argparse.Namespace) -> None:
 
         arm_ik = arm_ik_cls()
         if args.backend == "mujoco":
-            arm_ctrl = MujocoG1ArmController(
+            arm_ctrl = MujocoArmHandController(
                 model_path,
                 joint_names=arm_joint_names,
                 base_pos=ROBOT_MUJOCO_BASE_POSITIONS[args.robot],
@@ -710,7 +706,11 @@ def run(args: argparse.Namespace) -> None:
             hand_bridge = OmniHandController(
                 zmq_left_port=args.omnihand_zmq_left_port,
                 zmq_right_port=args.omnihand_zmq_right_port,
+                zmq_left_real_port=args.omnihand_zmq_left_real_port,
+                zmq_right_real_port=args.omnihand_zmq_right_real_port,
                 retargeting_type=args.omnihand_retargeting,
+                publish_sim=args.backend == "mujoco",
+                publish_real=args.backend == "real",
             )
     except Exception:
         if hand_bridge is not None:

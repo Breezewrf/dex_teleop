@@ -1,4 +1,4 @@
-"""VR hand retargeting and ZMQ publishing for OmniHandPro simulation."""
+"""VR hand retargeting and ZMQ publishing for OmniHandPro sim and hardware."""
 
 import argparse
 import logging
@@ -64,9 +64,13 @@ class OmniHandController:
         self,
         zmq_left_port: int = 5560,
         zmq_right_port: int = 5561,
+        zmq_left_real_port: int = 5555,
+        zmq_right_real_port: int = 5556,
         bind_host: str = "*",
         connect_delay: float = 0.5,
         retargeting_type: str = "dexpilot",
+        publish_sim: bool = True,
+        publish_real: bool = False,
     ) -> None:
         retargeting_types = {
             "dexpilot": HandType.OMNIHAND,
@@ -80,25 +84,55 @@ class OmniHandController:
                 f"got {retargeting_type!r}"
             ) from exc
         self.hand_retargeting = HandRetargeting(hand_type)
+        if not publish_sim and not publish_real:
+            raise ValueError("At least one OmniHand ZMQ output must be enabled")
         self.context = zmq.Context()
-        self.left_socket = self.context.socket(zmq.PUB)
-        self.right_socket = self.context.socket(zmq.PUB)
-        self.left_socket.setsockopt(zmq.LINGER, 0)
-        self.right_socket.setsockopt(zmq.LINGER, 0)
+        self.left_socket = None
+        self.right_socket = None
+        self.left_real_socket = None
+        self.right_real_socket = None
         self.closed = False
         self._target_hand_visualization: dict[str, dict] = {}
 
         try:
-            self.left_socket.bind(f"tcp://{bind_host}:{zmq_left_port}")
-            self.right_socket.bind(f"tcp://{bind_host}:{zmq_right_port}")
+            if publish_sim:
+                self.left_socket = self._bind_publisher(bind_host, zmq_left_port)
+                self.right_socket = self._bind_publisher(bind_host, zmq_right_port)
+            if publish_real:
+                self.left_real_socket = self._bind_publisher(
+                    bind_host, zmq_left_real_port
+                )
+                self.right_real_socket = self._bind_publisher(
+                    bind_host, zmq_right_real_port
+                )
         except Exception:
             self.close()
             raise
 
-        LOGGER.info("OmniHand left publisher bound to port %d", zmq_left_port)
-        LOGGER.info("OmniHand right publisher bound to port %d", zmq_right_port)
+        if publish_sim:
+            LOGGER.info(
+                "OmniHand simulation publishers bound to ports %d/%d",
+                zmq_left_port,
+                zmq_right_port,
+            )
+        if publish_real:
+            LOGGER.info(
+                "OmniHand physical-hand publishers bound to ports %d/%d",
+                zmq_left_real_port,
+                zmq_right_real_port,
+            )
         if connect_delay > 0.0:
             time.sleep(connect_delay)
+
+    def _bind_publisher(self, bind_host: str, port: int):
+        socket = self.context.socket(zmq.PUB)
+        socket.setsockopt(zmq.LINGER, 0)
+        try:
+            socket.bind(f"tcp://{bind_host}:{port}")
+        except Exception:
+            socket.close()
+            raise
+        return socket
 
     @staticmethod
     def _valid_hand_data(hand_data: np.ndarray) -> bool:
@@ -156,13 +190,14 @@ class OmniHandController:
         qpos: np.ndarray,
         joint_names: list[str],
         timestamp: float,
+        message_type: str,
         target_hand: Optional[dict] = None,
     ) -> dict:
         message = {
             "timestamp": timestamp,
             "qpos": qpos.tolist(),
             "joint_names": joint_names,
-            "type": "sim2sim",
+            "type": message_type,
         }
         if target_hand is not None:
             message["target_hand"] = target_hand
@@ -174,22 +209,42 @@ class OmniHandController:
         right_q = self._retarget(np.asarray(tele_data.right_hand_pos), "right")
         timestamp = time.time()
 
-        if left_q is not None:
+        if left_q is not None and self.left_socket is not None:
             self.left_socket.send_json(
                 self._message(
                     left_q,
                     self.hand_retargeting.left_omnihand_api_joint_names,
                     timestamp,
+                    "sim2sim",
                     self._target_hand_visualization.get("left"),
                 )
             )
-        if right_q is not None:
+        if right_q is not None and self.right_socket is not None:
             self.right_socket.send_json(
                 self._message(
                     right_q,
                     self.hand_retargeting.right_omnihand_api_joint_names,
                     timestamp,
+                    "sim2sim",
                     self._target_hand_visualization.get("right"),
+                )
+            )
+        if left_q is not None and self.left_real_socket is not None:
+            self.left_real_socket.send_json(
+                self._message(
+                    left_q,
+                    self.hand_retargeting.left_omnihand_api_joint_names,
+                    timestamp,
+                    "sim2real",
+                )
+            )
+        if right_q is not None and self.right_real_socket is not None:
+            self.right_real_socket.send_json(
+                self._message(
+                    right_q,
+                    self.hand_retargeting.right_omnihand_api_joint_names,
+                    timestamp,
+                    "sim2real",
                 )
             )
         return left_q, right_q
@@ -198,8 +253,14 @@ class OmniHandController:
         if self.closed:
             return
         self.closed = True
-        self.left_socket.close()
-        self.right_socket.close()
+        for socket in (
+            self.left_socket,
+            self.right_socket,
+            self.left_real_socket,
+            self.right_real_socket,
+        ):
+            if socket is not None:
+                socket.close()
         self.context.term()
 
 
@@ -214,9 +275,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default="dexpilot",
         help="Hand retargeting optimizer (default: dexpilot).",
     )
+    parser.add_argument("--backend", choices=("mujoco", "real"), default="mujoco")
     parser.add_argument("--frequency", type=float, default=30.0)
     parser.add_argument("--zmq-left-port", type=int, default=5560)
     parser.add_argument("--zmq-right-port", type=int, default=5561)
+    parser.add_argument("--zmq-left-real-port", type=int, default=5555)
+    parser.add_argument("--zmq-right-real-port", type=int, default=5556)
     parser.add_argument(
         "--bind-host",
         default="*",
@@ -269,9 +333,13 @@ def run_standalone(args: argparse.Namespace) -> None:
         controller = OmniHandController(
             zmq_left_port=args.zmq_left_port,
             zmq_right_port=args.zmq_right_port,
+            zmq_left_real_port=args.zmq_left_real_port,
+            zmq_right_real_port=args.zmq_right_real_port,
             bind_host=args.bind_host,
             connect_delay=args.connect_delay,
             retargeting_type=args.retargeting,
+            publish_sim=args.backend == "mujoco",
+            publish_real=args.backend == "real",
         )
 
         if not args.start_immediately:

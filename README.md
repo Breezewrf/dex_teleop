@@ -282,6 +282,29 @@ python teleop/robot_control/vr_arm_hand_teleop.py --backend real --hand casia --
 python teleop/robot_control/vr_arm_hand_teleop.py --backend real --hand none --robot x2
 ```
 
+- X2 + OmniHand Pro 2025 Teleop:
+```sh
+# Terminal 1: initialize both physical hands and subscribe to ports 5555/5556
+python /home/breeze/Desktop/workplace/Humanoid/omnihand_sdk/linux/x64/python/demo/server/omnihand_zmq_server.py \
+  --hands both --device hcan
+
+# Terminal 2: arm commands use port 8559; OmniHand commands use 5555/5556
+python teleop/robot_control/vr_arm_hand_teleop.py \
+  --backend real --robot x2 --hand omnihand
+```
+
+For HCAN, this server assumes one single-channel adapter per hand: left device
+0/channel 0 and right device 1/channel 0. Swap `--left-canfd-device-id` and
+`--right-canfd-device-id` if USB enumeration is reversed. ZLG defaults to one
+dual-channel adapter using channels 0/1. Use `--device socketcan` with
+`--left-can-interface can0 --right-can-interface can1` for SocketCAN. Add
+`--dry-run` to validate incoming commands without importing the OmniHand SDK or
+moving hardware. The standalone hand-only publisher also supports real output:
+
+```sh
+uv run teleop/robot_control/robot_hand_omnihand.py --backend real
+```
+
 Following is for CAISA dex hands:
 ```sh
 source /opt/zkgj_libs/setup.sh
