@@ -1,0 +1,187 @@
+# OmniHand Vector retargeting.
+#
+# Human landmark order (TeleVuer, 25 points):
+#   wrist=0, thumb=1..4, index=5..9, middle=10..14,
+#   ring=15..19, pinky=20..24.
+#
+# The first 20 vectors constrain the finger chains, including intermediate
+# phalanges.  The final 10 vectors constrain every fingertip pair so pinch and
+# grasp relationships are retained without DexPilot's contact projection.
+
+left:
+  type: vector
+  urdf_path: o12_hand_description-o12_t3/assets/urdf/omnihand_pro_left.urdf
+  target_joint_names: &left_active_joints
+    - L_thumb_roll_joint
+    - L_thumb_abad_joint
+    - L_thumb_mcp_joint
+    - L_thumb_pip_joint
+    - L_index_abad_joint
+    - L_index_mcp_joint
+    - L_index_pip_joint
+    - L_middle_abad_joint
+    - L_middle_mcp_joint
+    - L_middle_pip_joint
+    - L_ring_mcp_joint
+    - L_pinky_mcp_joint
+
+  target_origin_link_names:
+    # Finger-chain vectors: thumb, index, middle, ring, pinky.
+    - L_palm
+    - L_thumb_abad_link
+    - L_thumb_mcp_link
+    - L_thumb_pip_link
+    - L_palm
+    - L_index_mcp_link
+    - L_index_pip_link
+    - L_index_dip_link
+    - L_palm
+    - L_middle_mcp_link
+    - L_middle_pip_link
+    - L_middle_dip_link
+    - L_palm
+    - L_ring_mcp_link
+    - L_ring_pip_link
+    - L_ring_dip_link
+    - L_palm
+    - L_pinky_mcp_link
+    - L_pinky_pip_link
+    - L_pinky_dip_link
+    # All fingertip pairs.
+    - L_thumb_tip
+    - L_thumb_tip
+    - L_thumb_tip
+    - L_thumb_tip
+    - L_index_tip
+    - L_index_tip
+    - L_index_tip
+    - L_middle_tip
+    - L_middle_tip
+    - L_ring_tip
+
+  target_task_link_names:
+    - L_thumb_abad_link
+    - L_thumb_mcp_link
+    - L_thumb_pip_link
+    - L_thumb_tip
+    - L_index_mcp_link
+    - L_index_pip_link
+    - L_index_dip_link
+    - L_index_tip
+    - L_middle_mcp_link
+    - L_middle_pip_link
+    - L_middle_dip_link
+    - L_middle_tip
+    - L_ring_mcp_link
+    - L_ring_pip_link
+    - L_ring_dip_link
+    - L_ring_tip
+    - L_pinky_mcp_link
+    - L_pinky_pip_link
+    - L_pinky_dip_link
+    - L_pinky_tip
+    - L_index_tip
+    - L_middle_tip
+    - L_ring_tip
+    - L_pinky_tip
+    - L_middle_tip
+    - L_ring_tip
+    - L_pinky_tip
+    - L_ring_tip
+    - L_pinky_tip
+    - L_pinky_tip
+
+  target_link_human_indices_vector:
+    - [0, 1, 2, 3, 0, 6, 7, 8, 0, 11, 12, 13, 0, 16, 17, 18, 0, 21, 22, 23, 4, 4, 4, 4, 9, 9, 9, 14, 14, 19]
+    - [1, 2, 3, 4, 6, 7, 8, 9, 11, 12, 13, 14, 16, 17, 18, 19, 21, 22, 23, 24, 9, 14, 19, 24, 14, 19, 24, 19, 24, 24]
+
+  scaling_factor: 1.2
+  low_pass_alpha: 0.2
+
+right:
+  type: vector
+  urdf_path: o12_hand_description-o12_t3/assets/urdf/omnihand_pro_right.urdf
+  target_joint_names: &right_active_joints
+    - R_thumb_roll_joint
+    - R_thumb_abad_joint
+    - R_thumb_mcp_joint
+    - R_thumb_pip_joint
+    - R_index_abad_joint
+    - R_index_mcp_joint
+    - R_index_pip_joint
+    - R_middle_abad_joint
+    - R_middle_mcp_joint
+    - R_middle_pip_joint
+    - R_ring_mcp_joint
+    - R_pinky_mcp_joint
+
+  target_origin_link_names:
+    - R_palm
+    - R_thumb_abad_link
+    - R_thumb_mcp_link
+    - R_thumb_pip_link
+    - R_palm
+    - R_index_mcp_link
+    - R_index_pip_link
+    - R_index_dip_link
+    - R_palm
+    - R_middle_mcp_link
+    - R_middle_pip_link
+    - R_middle_dip_link
+    - R_palm
+    - R_ring_mcp_link
+    - R_ring_pip_link
+    - R_ring_dip_link
+    - R_palm
+    - R_pinky_mcp_link
+    - R_pinky_pip_link
+    - R_pinky_dip_link
+    - R_thumb_tip
+    - R_thumb_tip
+    - R_thumb_tip
+    - R_thumb_tip
+    - R_index_tip
+    - R_index_tip
+    - R_index_tip
+    - R_middle_tip
+    - R_middle_tip
+    - R_ring_tip
+
+  target_task_link_names:
+    - R_thumb_abad_link
+    - R_thumb_mcp_link
+    - R_thumb_pip_link
+    - R_thumb_tip
+    - R_index_mcp_link
+    - R_index_pip_link
+    - R_index_dip_link
+    - R_index_tip
+    - R_middle_mcp_link
+    - R_middle_pip_link
+    - R_middle_dip_link
+    - R_middle_tip
+    - R_ring_mcp_link
+    - R_ring_pip_link
+    - R_ring_dip_link
+    - R_ring_tip
+    - R_pinky_mcp_link
+    - R_pinky_pip_link
+    - R_pinky_dip_link
+    - R_pinky_tip
+    - R_index_tip
+    - R_middle_tip
+    - R_ring_tip
+    - R_pinky_tip
+    - R_middle_tip
+    - R_ring_tip
+    - R_pinky_tip
+    - R_ring_tip
+    - R_pinky_tip
+    - R_pinky_tip
+
+  target_link_human_indices_vector:
+    - [0, 1, 2, 3, 0, 6, 7, 8, 0, 11, 12, 13, 0, 16, 17, 18, 0, 21, 22, 23, 4, 4, 4, 4, 9, 9, 9, 14, 14, 19]
+    - [1, 2, 3, 4, 6, 7, 8, 9, 11, 12, 13, 14, 16, 17, 18, 19, 21, 22, 23, 24, 9, 14, 19, 24, 14, 19, 24, 19, 24, 24]
+
+  scaling_factor: 1.2
+  low_pass_alpha: 0.2

@@ -26,6 +26,7 @@ DEFAULT_G1_23_MODEL = os.path.join(PROJECT_ROOT, "assets/g1/g1_23dof_rev_1_0.xml
 DEFAULT_G1_CASIA_MODEL = os.path.join(PROJECT_ROOT, "assets/g1/g1_body29_casia_hand.xml")
 DEFAULT_G1_23_CASIA_MODEL = os.path.join(PROJECT_ROOT, "assets/g1/g1_23dof_rev_1_0_casia_hand.xml")
 DEFAULT_X2_MODEL = os.path.join(PROJECT_ROOT, "assets/X2/x2_ultra.xml")
+DEFAULT_X2_OMNIHAND_MODEL = os.path.join(PROJECT_ROOT, "assets/X2/x2_ultra_omnihand.xml")
 
 G1_29_ARM_JOINT_NAMES = (
     "left_shoulder_pitch_joint",
@@ -120,6 +121,25 @@ CASIA_RIGHT_JOINT_NAMES = (
     "right_thumb_intermediate",
 )
 
+OMNIHAND_LEFT_JOINT_NAMES = (
+    "L_thumb_roll_joint",
+    "L_thumb_abad_joint",
+    "L_thumb_mcp_joint",
+    "L_thumb_pip_joint",
+    "L_index_abad_joint",
+    "L_index_mcp_joint",
+    "L_index_pip_joint",
+    "L_middle_abad_joint",
+    "L_middle_mcp_joint",
+    "L_middle_pip_joint",
+    "L_ring_mcp_joint",
+    "L_pinky_mcp_joint",
+)
+
+OMNIHAND_RIGHT_JOINT_NAMES = tuple(
+    name.replace("L_", "R_", 1) for name in OMNIHAND_LEFT_JOINT_NAMES
+)
+
 
 @dataclass
 class ArmState:
@@ -127,17 +147,18 @@ class ArmState:
     dq: np.ndarray
 
 
-class MujocoG1ArmController:
+class MujocoArmHandController:
     def __init__(
         self,
         model_path: str,
-        joint_names: Iterable[str] = G1_29_ARM_JOINT_NAMES,
+        joint_names: Iterable[str],
         base_pos: Optional[np.ndarray] = None,
         render: bool = True,
         control_mode: str = "kinematic",
         kp: float = 80.0,
         kd: float = 3.0,
         enable_casia_hand: bool = False,
+        enable_omnihand_hand: bool = False,
     ):
         import mujoco
 
@@ -150,6 +171,9 @@ class MujocoG1ArmController:
         self.kd = kd
         self.viewer = None
         self.enable_casia_hand = enable_casia_hand
+        self.enable_omnihand_hand = enable_omnihand_hand
+        if self.enable_casia_hand and self.enable_omnihand_hand:
+            raise ValueError("Only one integrated dexterous hand model can be enabled")
 
         self.joint_ids = np.array(
             [self._name_to_id(mujoco.mjtObj.mjOBJ_JOINT, name) for name in self.joint_names],
@@ -171,6 +195,17 @@ class MujocoG1ArmController:
         self.right_casia_ranges = None
         if self.enable_casia_hand:
             self._setup_casia_hand_joints()
+
+        self.left_omnihand_qpos_ids = None
+        self.left_omnihand_dof_ids = None
+        self.left_omnihand_ranges = None
+        self.right_omnihand_qpos_ids = None
+        self.right_omnihand_dof_ids = None
+        self.right_omnihand_ranges = None
+        self.omnihand_coupled_equalities = []
+        self.omnihand_passive_dof_ids = np.array([], dtype=np.int32)
+        if self.enable_omnihand_hand:
+            self._setup_omnihand_joints()
 
         if self.control_mode not in ("kinematic", "pd"):
             raise ValueError(f"Unsupported MuJoCo control mode: {self.control_mode}")
@@ -211,6 +246,75 @@ class MujocoG1ArmController:
         self.right_casia_dof_ids = self.model.jnt_dofadr[right_joint_ids]
         self.right_casia_ranges = self.model.jnt_range[right_joint_ids].copy()
 
+    def _omnihand_model_joint_name(self, joint_name: str, side: str) -> str:
+        candidates = (joint_name, f"x2_{side}_{joint_name}")
+        for candidate in candidates:
+            if self.mujoco.mj_name2id(
+                self.model, self.mujoco.mjtObj.mjOBJ_JOINT, candidate
+            ) >= 0:
+                return candidate
+        raise ValueError(
+            f"MuJoCo model does not contain OmniHand joint {joint_name!r}; "
+            f"tried {candidates}"
+        )
+
+    def _setup_omnihand_joints(self) -> None:
+        left_names = [
+            self._omnihand_model_joint_name(name, "left")
+            for name in OMNIHAND_LEFT_JOINT_NAMES
+        ]
+        right_names = [
+            self._omnihand_model_joint_name(name, "right")
+            for name in OMNIHAND_RIGHT_JOINT_NAMES
+        ]
+        left_joint_ids = self._required_joint_ids(left_names)
+        right_joint_ids = self._required_joint_ids(right_names)
+        self.left_omnihand_qpos_ids = self.model.jnt_qposadr[left_joint_ids]
+        self.left_omnihand_dof_ids = self.model.jnt_dofadr[left_joint_ids]
+        self.left_omnihand_ranges = self.model.jnt_range[left_joint_ids].copy()
+        self.right_omnihand_qpos_ids = self.model.jnt_qposadr[right_joint_ids]
+        self.right_omnihand_dof_ids = self.model.jnt_dofadr[right_joint_ids]
+        self.right_omnihand_ranges = self.model.jnt_range[right_joint_ids].copy()
+
+        passive_dof_ids = []
+        scalar_types = (
+            self.mujoco.mjtJoint.mjJNT_HINGE,
+            self.mujoco.mjtJoint.mjJNT_SLIDE,
+        )
+        for equality_id in range(self.model.neq):
+            if self.model.eq_type[equality_id] != self.mujoco.mjtEq.mjEQ_JOINT:
+                continue
+            if not self.model.eq_active0[equality_id]:
+                continue
+            passive_joint_id = int(self.model.eq_obj1id[equality_id])
+            source_joint_id = int(self.model.eq_obj2id[equality_id])
+            if passive_joint_id < 0 or source_joint_id < 0:
+                continue
+            passive_name = self.mujoco.mj_id2name(
+                self.model, self.mujoco.mjtObj.mjOBJ_JOINT, passive_joint_id
+            ) or ""
+            if "L_" not in passive_name and "R_" not in passive_name:
+                continue
+            if (
+                self.model.jnt_type[passive_joint_id] not in scalar_types
+                or self.model.jnt_type[source_joint_id] not in scalar_types
+            ):
+                raise ValueError("OmniHand coupling only supports scalar joints")
+            self.omnihand_coupled_equalities.append(
+                (
+                    int(self.model.jnt_qposadr[passive_joint_id]),
+                    int(self.model.jnt_qposadr[source_joint_id]),
+                    self.model.eq_data[equality_id, :5].copy(),
+                )
+            )
+            passive_dof_ids.append(int(self.model.jnt_dofadr[passive_joint_id]))
+        self.omnihand_passive_dof_ids = np.asarray(passive_dof_ids, dtype=np.int32)
+        if len(self.omnihand_coupled_equalities) != 14:
+            raise ValueError(
+                "Expected 14 OmniHand passive-joint equality mappings in the "
+                f"dual-hand model, found {len(self.omnihand_coupled_equalities)}"
+            )
+
     def _required_joint_ids(self, names: Iterable[str]) -> np.ndarray:
         joint_ids = np.array(
             [self.mujoco.mj_name2id(self.model, self.mujoco.mjtObj.mjOBJ_JOINT, name) for name in names],
@@ -218,7 +322,7 @@ class MujocoG1ArmController:
         )
         if np.any(joint_ids < 0):
             missing = [name for name, joint_id in zip(names, joint_ids) if joint_id < 0]
-            raise ValueError(f"MuJoCo model does not contain Casia hand joints: {missing}")
+            raise ValueError(f"MuJoCo model does not contain required joints: {missing}")
         return joint_ids
 
     def get_state(self) -> ArmState:
@@ -265,6 +369,48 @@ class MujocoG1ArmController:
         )
         self.data.qvel[self.left_casia_dof_ids] = 0.0
         self.data.qvel[self.right_casia_dof_ids] = 0.0
+        self.mujoco.mj_forward(self.model, self.data)
+
+        if self.viewer is not None:
+            self.viewer.sync()
+
+    def set_omnihand_q(
+        self,
+        left_q: Optional[np.ndarray],
+        right_q: Optional[np.ndarray],
+    ) -> None:
+        if self.left_omnihand_qpos_ids is None or self.right_omnihand_qpos_ids is None:
+            return
+
+        for side, q, qpos_ids, dof_ids, ranges in (
+            (
+                "left",
+                left_q,
+                self.left_omnihand_qpos_ids,
+                self.left_omnihand_dof_ids,
+                self.left_omnihand_ranges,
+            ),
+            (
+                "right",
+                right_q,
+                self.right_omnihand_qpos_ids,
+                self.right_omnihand_dof_ids,
+                self.right_omnihand_ranges,
+            ),
+        ):
+            if q is None:
+                continue
+            q = np.asarray(q, dtype=np.float64)
+            if q.shape != (12,) or not np.all(np.isfinite(q)):
+                raise ValueError(f"Expected 12 finite {side} OmniHand joints, got {q.shape}")
+            self.data.qpos[qpos_ids] = np.clip(q, ranges[:, 0], ranges[:, 1])
+            self.data.qvel[dof_ids] = 0.0
+
+        for passive_qpos, source_qpos, coefficients in self.omnihand_coupled_equalities:
+            self.data.qpos[passive_qpos] = np.polynomial.polynomial.polyval(
+                self.data.qpos[source_qpos], coefficients
+            )
+        self.data.qvel[self.omnihand_passive_dof_ids] = 0.0
         self.mujoco.mj_forward(self.model, self.data)
 
         if self.viewer is not None:
@@ -430,6 +576,8 @@ def default_mujoco_model(robot: str, hand: str) -> str:
     if robot == "x2":
         if hand == "casia":
             raise ValueError("The X2 MuJoCo model does not contain Casia hand joints. Use --hand none.")
+        if hand == "omnihand":
+            return DEFAULT_X2_OMNIHAND_MODEL
         return DEFAULT_X2_MODEL
     if hand == "casia":
         if robot == "g1_23" and os.path.exists(DEFAULT_G1_23_CASIA_MODEL):
@@ -444,16 +592,16 @@ def default_mujoco_model(robot: str, hand: str) -> str:
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Minimal VR wrist/hand teleop for G1 arms and optional Casia hand retargeting."
+        description="VR wrist/hand teleop for G1/X2 arms and optional dexterous-hand retargeting."
     )
     parser.add_argument("--robot", choices=("g1_29", "g1_23", "x2"), default="g1_29")
     parser.add_argument("--backend", choices=("mujoco", "real"), default="mujoco")
-    parser.add_argument("--hand", choices=("none", "casia"), default="none")
+    parser.add_argument("--hand", choices=("none", "casia", "omnihand"), default="none")
     parser.add_argument("--frequency", type=float, default=30.0)
     parser.add_argument(
         "--model",
         default=None,
-        help="MuJoCo XML path. Defaults to a G1 model matching --robot/--hand.",
+        help="MuJoCo XML path. Defaults to an integrated model matching --robot/--hand.",
     )
     parser.add_argument("--no-render", action="store_true", help="Disable MuJoCo passive viewer.")
     parser.add_argument(
@@ -479,6 +627,25 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--casia-zmq-right-port", type=int, default=5561)
     parser.add_argument("--casia-zmq-left-real-port", type=int, default=5555)
     parser.add_argument("--casia-zmq-right-real-port", type=int, default=5556)
+    parser.add_argument("--omnihand-zmq-left-port", type=int, default=5560)
+    parser.add_argument("--omnihand-zmq-right-port", type=int, default=5561)
+    parser.add_argument("--omnihand-zmq-left-real-port", type=int, default=5555)
+    parser.add_argument("--omnihand-zmq-right-real-port", type=int, default=5556)
+    parser.add_argument(
+        "--sync-frame-enable-zmq",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Publish atomic arm/left-hand/right-hand frames on a side channel.",
+    )
+    parser.add_argument("--sync-frame-zmq-bind-host", default="0.0.0.0")
+    parser.add_argument("--sync-frame-zmq-port", type=int, default=8560)
+    parser.add_argument("--sync-frame-zmq-connect-delay", type=float, default=0.5)
+    parser.add_argument(
+        "--omnihand-retargeting",
+        choices=("dexpilot", "vector"),
+        default="dexpilot",
+        help="OmniHand optimizer: DexPilot contact projection or articulated Vector targets.",
+    )
     return parser
 
 
@@ -501,6 +668,8 @@ def run(args: argparse.Namespace) -> None:
     arm_ctrl = None
     hand_bridge = None
     mujoco_hand_retargeter = None
+    sync_frame_publisher = None
+    sync_frame_builder = None
     try:
         tv_wrapper = TeleVuerWrapper(
             use_hand_tracking=True,
@@ -512,7 +681,7 @@ def run(args: argparse.Namespace) -> None:
 
         arm_ik = arm_ik_cls()
         if args.backend == "mujoco":
-            arm_ctrl = MujocoG1ArmController(
+            arm_ctrl = MujocoArmHandController(
                 model_path,
                 joint_names=arm_joint_names,
                 base_pos=ROBOT_MUJOCO_BASE_POSITIONS[args.robot],
@@ -521,6 +690,7 @@ def run(args: argparse.Namespace) -> None:
                 kp=args.mujoco_kp,
                 kd=args.mujoco_kd,
                 enable_casia_hand=args.hand == "casia",
+                enable_omnihand_hand=args.robot == "x2" and args.hand == "omnihand",
             )
             if args.hand == "casia":
                 mujoco_hand_retargeter = CasiaMujocoRetargeter()
@@ -541,7 +711,39 @@ def run(args: argparse.Namespace) -> None:
                 args.casia_zmq_left_real_port,
                 args.casia_zmq_right_real_port,
             )
+        elif args.hand == "omnihand":
+            from teleop.robot_control.robot_hand_omnihand import OmniHandController
+
+            hand_bridge = OmniHandController(
+                zmq_left_port=args.omnihand_zmq_left_port,
+                zmq_right_port=args.omnihand_zmq_right_port,
+                zmq_left_real_port=args.omnihand_zmq_left_real_port,
+                zmq_right_real_port=args.omnihand_zmq_right_real_port,
+                retargeting_type=args.omnihand_retargeting,
+                publish_sim=args.backend == "mujoco",
+                publish_real=args.backend == "real",
+            )
+
+        if args.sync_frame_enable_zmq:
+            from teleop.robot_control.synchronized_frame_util import (
+                SynchronizedFramePublisher,
+                build_synchronized_frame,
+            )
+
+            sync_frame_publisher = SynchronizedFramePublisher(
+                bind_host=args.sync_frame_zmq_bind_host,
+                port=args.sync_frame_zmq_port,
+                connect_delay=args.sync_frame_zmq_connect_delay,
+            )
+            sync_frame_builder = build_synchronized_frame
+            LOGGER.info(
+                "Synchronized frame publisher bound to tcp://%s:%d",
+                args.sync_frame_zmq_bind_host,
+                args.sync_frame_zmq_port,
+            )
     except Exception:
+        if sync_frame_publisher is not None:
+            sync_frame_publisher.close()
         if hand_bridge is not None:
             hand_bridge.close()
         if arm_ctrl is not None:
@@ -564,13 +766,18 @@ def run(args: argparse.Namespace) -> None:
             input("Press Enter to start VR arm/hand tracking. Press Ctrl+C to stop.\n")
 
         dt = 1.0 / args.frequency
+        frame_id = 0
         LOGGER.info("Started VR tracking with robot=%s, backend=%s, hand=%s", args.robot, args.backend, args.hand)
         while not stop:
             start = time.time()
             tele_data = tv_wrapper.get_tele_data()
+            capture_timestamp_ns = (
+                time.time_ns() if sync_frame_publisher is not None else 0
+            )
 
+            hand_bridge_q = None
             if hand_bridge is not None:
-                hand_bridge.update(tele_data)
+                hand_bridge_q = hand_bridge.update(tele_data)
 
             state = arm_ctrl.get_state()
             sol_q, sol_tauff = arm_ik.solve_ik(
@@ -580,10 +787,68 @@ def run(args: argparse.Namespace) -> None:
                 state.dq,
             )
             arm_ctrl.send(sol_q, sol_tauff)
+            synchronized_hand_q = hand_bridge_q
             if mujoco_hand_retargeter is not None:
                 hand_q = mujoco_hand_retargeter.retarget(tele_data)
                 if hand_q is not None:
                     arm_ctrl.set_casia_hand_q(*hand_q)
+                    synchronized_hand_q = hand_q
+            elif (
+                args.backend == "mujoco"
+                and args.robot == "x2"
+                and args.hand == "omnihand"
+                and hand_bridge_q is not None
+            ):
+                arm_ctrl.set_omnihand_q(*hand_bridge_q)
+
+            if sync_frame_publisher is not None:
+                if args.hand == "omnihand":
+                    left_hand_joint_names = OMNIHAND_LEFT_JOINT_NAMES
+                    right_hand_joint_names = OMNIHAND_RIGHT_JOINT_NAMES
+                elif args.hand == "casia":
+                    left_hand_joint_names = CASIA_LEFT_JOINT_NAMES
+                    right_hand_joint_names = CASIA_RIGHT_JOINT_NAMES
+                else:
+                    left_hand_joint_names = ()
+                    right_hand_joint_names = ()
+
+                if synchronized_hand_q is None:
+                    left_hand_q = None
+                    right_hand_q = None
+                else:
+                    left_hand_q, right_hand_q = synchronized_hand_q
+
+                try:
+                    timestamp_ns = time.time_ns()
+                    frame = sync_frame_builder(
+                        frame_id=frame_id,
+                        mode="sim2sim" if args.backend == "mujoco" else "sim2real",
+                        robot=args.robot,
+                        hand_type=args.hand,
+                        timestamp_ns=timestamp_ns,
+                        monotonic_ns=time.monotonic_ns(),
+                        capture_timestamp_ns=capture_timestamp_ns,
+                        arm_joint_names=arm_joint_names,
+                        arm_qpos=sol_q,
+                        arm_tauff=sol_tauff,
+                        left_hand_joint_names=left_hand_joint_names,
+                        left_hand_qpos=left_hand_q,
+                        right_hand_joint_names=right_hand_joint_names,
+                        right_hand_qpos=right_hand_q,
+                        left_wrist_pose=tele_data.left_wrist_pose,
+                        right_wrist_pose=tele_data.right_wrist_pose,
+                        left_hand_landmarks=tele_data.left_hand_pos,
+                        right_hand_landmarks=tele_data.right_hand_pos,
+                    )
+                    if not sync_frame_publisher.publish(frame):
+                        LOGGER.warning("Dropped synchronized dataset frame %d", frame_id)
+                except Exception as exc:
+                    LOGGER.warning(
+                        "Synchronized frame side channel failed for frame %d: %s",
+                        frame_id,
+                        exc,
+                    )
+                frame_id += 1
 
             if args.log_poses:
                 LOGGER.info(
@@ -602,6 +867,8 @@ def run(args: argparse.Namespace) -> None:
             LOGGER.warning("Failed to send arms home: %s", exc)
         if hand_bridge is not None:
             hand_bridge.close()
+        if sync_frame_publisher is not None:
+            sync_frame_publisher.close()
         if arm_ctrl is not None:
             arm_ctrl.close()
         if tv_wrapper is not None:
