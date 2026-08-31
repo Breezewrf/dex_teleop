@@ -632,6 +632,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--omnihand-zmq-left-real-port", type=int, default=5555)
     parser.add_argument("--omnihand-zmq-right-real-port", type=int, default=5556)
     parser.add_argument(
+        "--sync-frame-enable-zmq",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Publish atomic arm/left-hand/right-hand frames on a side channel.",
+    )
+    parser.add_argument("--sync-frame-zmq-bind-host", default="0.0.0.0")
+    parser.add_argument("--sync-frame-zmq-port", type=int, default=8560)
+    parser.add_argument("--sync-frame-zmq-connect-delay", type=float, default=0.5)
+    parser.add_argument(
         "--omnihand-retargeting",
         choices=("dexpilot", "vector"),
         default="dexpilot",
@@ -659,6 +668,8 @@ def run(args: argparse.Namespace) -> None:
     arm_ctrl = None
     hand_bridge = None
     mujoco_hand_retargeter = None
+    sync_frame_publisher = None
+    sync_frame_builder = None
     try:
         tv_wrapper = TeleVuerWrapper(
             use_hand_tracking=True,
@@ -712,7 +723,27 @@ def run(args: argparse.Namespace) -> None:
                 publish_sim=args.backend == "mujoco",
                 publish_real=args.backend == "real",
             )
+
+        if args.sync_frame_enable_zmq:
+            from teleop.robot_control.synchronized_frame_util import (
+                SynchronizedFramePublisher,
+                build_synchronized_frame,
+            )
+
+            sync_frame_publisher = SynchronizedFramePublisher(
+                bind_host=args.sync_frame_zmq_bind_host,
+                port=args.sync_frame_zmq_port,
+                connect_delay=args.sync_frame_zmq_connect_delay,
+            )
+            sync_frame_builder = build_synchronized_frame
+            LOGGER.info(
+                "Synchronized frame publisher bound to tcp://%s:%d",
+                args.sync_frame_zmq_bind_host,
+                args.sync_frame_zmq_port,
+            )
     except Exception:
+        if sync_frame_publisher is not None:
+            sync_frame_publisher.close()
         if hand_bridge is not None:
             hand_bridge.close()
         if arm_ctrl is not None:
@@ -735,10 +766,14 @@ def run(args: argparse.Namespace) -> None:
             input("Press Enter to start VR arm/hand tracking. Press Ctrl+C to stop.\n")
 
         dt = 1.0 / args.frequency
+        frame_id = 0
         LOGGER.info("Started VR tracking with robot=%s, backend=%s, hand=%s", args.robot, args.backend, args.hand)
         while not stop:
             start = time.time()
             tele_data = tv_wrapper.get_tele_data()
+            capture_timestamp_ns = (
+                time.time_ns() if sync_frame_publisher is not None else 0
+            )
 
             hand_bridge_q = None
             if hand_bridge is not None:
@@ -752,10 +787,12 @@ def run(args: argparse.Namespace) -> None:
                 state.dq,
             )
             arm_ctrl.send(sol_q, sol_tauff)
+            synchronized_hand_q = hand_bridge_q
             if mujoco_hand_retargeter is not None:
                 hand_q = mujoco_hand_retargeter.retarget(tele_data)
                 if hand_q is not None:
                     arm_ctrl.set_casia_hand_q(*hand_q)
+                    synchronized_hand_q = hand_q
             elif (
                 args.backend == "mujoco"
                 and args.robot == "x2"
@@ -763,6 +800,55 @@ def run(args: argparse.Namespace) -> None:
                 and hand_bridge_q is not None
             ):
                 arm_ctrl.set_omnihand_q(*hand_bridge_q)
+
+            if sync_frame_publisher is not None:
+                if args.hand == "omnihand":
+                    left_hand_joint_names = OMNIHAND_LEFT_JOINT_NAMES
+                    right_hand_joint_names = OMNIHAND_RIGHT_JOINT_NAMES
+                elif args.hand == "casia":
+                    left_hand_joint_names = CASIA_LEFT_JOINT_NAMES
+                    right_hand_joint_names = CASIA_RIGHT_JOINT_NAMES
+                else:
+                    left_hand_joint_names = ()
+                    right_hand_joint_names = ()
+
+                if synchronized_hand_q is None:
+                    left_hand_q = None
+                    right_hand_q = None
+                else:
+                    left_hand_q, right_hand_q = synchronized_hand_q
+
+                try:
+                    timestamp_ns = time.time_ns()
+                    frame = sync_frame_builder(
+                        frame_id=frame_id,
+                        mode="sim2sim" if args.backend == "mujoco" else "sim2real",
+                        robot=args.robot,
+                        hand_type=args.hand,
+                        timestamp_ns=timestamp_ns,
+                        monotonic_ns=time.monotonic_ns(),
+                        capture_timestamp_ns=capture_timestamp_ns,
+                        arm_joint_names=arm_joint_names,
+                        arm_qpos=sol_q,
+                        arm_tauff=sol_tauff,
+                        left_hand_joint_names=left_hand_joint_names,
+                        left_hand_qpos=left_hand_q,
+                        right_hand_joint_names=right_hand_joint_names,
+                        right_hand_qpos=right_hand_q,
+                        left_wrist_pose=tele_data.left_wrist_pose,
+                        right_wrist_pose=tele_data.right_wrist_pose,
+                        left_hand_landmarks=tele_data.left_hand_pos,
+                        right_hand_landmarks=tele_data.right_hand_pos,
+                    )
+                    if not sync_frame_publisher.publish(frame):
+                        LOGGER.warning("Dropped synchronized dataset frame %d", frame_id)
+                except Exception as exc:
+                    LOGGER.warning(
+                        "Synchronized frame side channel failed for frame %d: %s",
+                        frame_id,
+                        exc,
+                    )
+                frame_id += 1
 
             if args.log_poses:
                 LOGGER.info(
@@ -781,6 +867,8 @@ def run(args: argparse.Namespace) -> None:
             LOGGER.warning("Failed to send arms home: %s", exc)
         if hand_bridge is not None:
             hand_bridge.close()
+        if sync_frame_publisher is not None:
+            sync_frame_publisher.close()
         if arm_ctrl is not None:
             arm_ctrl.close()
         if tv_wrapper is not None:
