@@ -26,6 +26,7 @@ The system receives hand and wrist tracking data from a Meta Quest 3 headset, re
    Simulation     8559    5560          5561
   ────────────    ───  ─────────    ──────────
    Physical       8559    5555          5556
+   Dataset frame  8560 (arm + left hand + right hand, opt-in)
 ```
 
 ## Prepare Env
@@ -109,6 +110,43 @@ In the integrated viewer, X2 writes the 12 active OmniHand joints and
 evaluates the 7 passive-joint polynomials. CASIA writes all 14 joints per
 hand directly. `--mujoco-control {kinematic,pd}` controls the robot arms; it is
 separate from the standalone hand receiver's `--control-mode`.
+
+### Synchronized dataset stream
+
+The integrated entry point can publish one atomic recorder frame after the arm
+IK and both hand retargeters have completed. This is an optional side channel;
+it does not replace or modify the existing arm and hand control publishers.
+The default endpoint is `tcp://0.0.0.0:8560`.
+
+Start the read-only verification receiver first:
+
+```sh
+python teleop/robot_control/synchronized_frame_receiver.py \
+  --endpoint tcp://127.0.0.1:8560
+```
+
+Enable it for sim2sim:
+
+```sh
+python teleop/robot_control/vr_arm_hand_teleop.py \
+  --backend mujoco --robot x2 --hand omnihand \
+  --sync-frame-enable-zmq
+```
+
+Or enable the same schema for sim2real:
+
+```sh
+python teleop/robot_control/vr_arm_hand_teleop.py \
+  --backend real --robot x2 --hand omnihand \
+  --sync-frame-enable-zmq
+```
+
+Every message contains a shared `frame_id`, nanosecond wall/monotonic times,
+arm targets, left/right hand targets, wrist poses, and raw hand landmarks.
+`mode` is `sim2sim` or `sim2real`. A temporarily untracked hand remains in the
+frame with `valid: false` and an empty `qpos`, so the recorder never needs to
+join three independent ZMQ streams. Use `--print-json` on the receiver to view
+the complete schema.
 
 ### Standalone hand simulation
 
@@ -280,6 +318,29 @@ python teleop/robot_control/vr_arm_hand_teleop.py --backend real --hand casia --
 - X2 Arm Teleop:
 ```sh
 python teleop/robot_control/vr_arm_hand_teleop.py --backend real --hand none --robot x2
+```
+
+- X2 + OmniHand Pro 2025 Teleop:
+```sh
+# Terminal 1: initialize both physical hands and subscribe to ports 5555/5556
+python /home/breeze/Desktop/workplace/Humanoid/omnihand_sdk/linux/x64/python/demo/server/omnihand_zmq_server.py \
+  --hands both --device hcan
+
+# Terminal 2: arm commands use port 8559; OmniHand commands use 5555/5556
+python teleop/robot_control/vr_arm_hand_teleop.py \
+  --backend real --robot x2 --hand omnihand
+```
+
+For HCAN, this server assumes one single-channel adapter per hand: left device
+0/channel 0 and right device 1/channel 0. Swap `--left-canfd-device-id` and
+`--right-canfd-device-id` if USB enumeration is reversed. ZLG defaults to one
+dual-channel adapter using channels 0/1. Use `--device socketcan` with
+`--left-can-interface can0 --right-can-interface can1` for SocketCAN. Add
+`--dry-run` to validate incoming commands without importing the OmniHand SDK or
+moving hardware. The standalone hand-only publisher also supports real output:
+
+```sh
+uv run teleop/robot_control/robot_hand_omnihand.py --backend real
 ```
 
 Following is for CAISA dex hands:

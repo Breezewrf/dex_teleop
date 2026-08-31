@@ -14,7 +14,7 @@ from teleop.robot_control.robot_hand_omnihand import (
     unitree_to_omnihand_points,
 )
 from teleop.robot_control.vr_arm_hand_teleop import (
-    MujocoG1ArmController,
+    MujocoArmHandController,
     build_arg_parser,
     default_mujoco_model,
 )
@@ -163,23 +163,46 @@ class OmniHandRetargetingTest(unittest.TestCase):
             [
                 "--retargeting",
                 "vector",
+                "--backend",
+                "real",
                 "--frequency",
                 "60",
                 "--zmq-left-port",
                 "6000",
                 "--zmq-right-port",
                 "6001",
+                "--zmq-left-real-port",
+                "6002",
+                "--zmq-right-real-port",
+                "6003",
                 "--bind-host",
                 "127.0.0.1",
                 "--start-immediately",
             ]
         )
         self.assertEqual(args.retargeting, "vector")
+        self.assertEqual(args.backend, "real")
         self.assertEqual(args.frequency, 60.0)
         self.assertEqual(args.zmq_left_port, 6000)
         self.assertEqual(args.zmq_right_port, 6001)
+        self.assertEqual(args.zmq_left_real_port, 6002)
+        self.assertEqual(args.zmq_right_real_port, 6003)
         self.assertEqual(args.bind_host, "127.0.0.1")
         self.assertTrue(args.start_immediately)
+
+    def test_sim2real_message_uses_sdk_joint_order(self):
+        qpos = np.linspace(-0.2, 0.9, 12)
+        joint_names = self.retargeting.left_omnihand_api_joint_names
+        message = OmniHandController._message(
+            qpos,
+            joint_names,
+            123.0,
+            "sim2real",
+        )
+        self.assertEqual(message["type"], "sim2real")
+        self.assertEqual(message["joint_names"], joint_names)
+        np.testing.assert_allclose(message["qpos"], qpos)
+        self.assertNotIn("target_hand", message)
 
     def test_vector_config_builds_with_intermediate_links(self):
         vector_retargeting = HandRetargeting(HandType.OMNIHAND_VECTOR)
@@ -427,7 +450,7 @@ class X2OmniHandIntegrationTest(unittest.TestCase):
         self.assertEqual(data.ncon, 0)
 
     def test_integrated_controller_applies_passive_joint_polynomial(self):
-        controller = MujocoG1ArmController(
+        controller = MujocoArmHandController(
             str(X2_OMNIHAND_PATH),
             joint_names=(
                 "left_shoulder_pitch_joint",
