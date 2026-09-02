@@ -7,8 +7,15 @@ import threading
 import json
 import zmq
 from multiprocessing import Process, Array, Value, Lock
+from typing import Optional
 
-import logging_mp
+try:
+    import logging_mp
+except ModuleNotFoundError:
+    # The synchronized publisher does not require multiprocessing logging.
+    # Keep the legacy logger when available, but allow lightweight recorder
+    # environments to import the controller as well.
+    import logging as logging_mp
 
 try:
     logging_mp.basicConfig(level=logging_mp.INFO)
@@ -23,6 +30,208 @@ from teleop.robot_control.hand_retargeting import HandRetargeting, HandType
 
 CASIA_Num_Motors = 14
 CASIA_Num_Motors_Real = 10
+CASIA_LEFT_JOINT_NAMES = (
+    "left_index_proximal", "left_index_intermediate", "left_index_distal",
+    "left_pinky_proximal", "left_pinky_intermediate", "left_pinky_distal",
+    "left_middle_proximal", "left_middle_intermediate", "left_middle_distal",
+    "left_ring_proximal", "left_ring_intermediate", "left_ring_distal",
+    "left_thumb_proximal", "left_thumb_intermediate",
+)
+CASIA_RIGHT_JOINT_NAMES = tuple(
+    name.replace("left_", "right_", 1) for name in CASIA_LEFT_JOINT_NAMES
+)
+CASIA_LEFT_REAL_JOINT_NAMES = (
+    "left_thumb_proximal", "left_thumb_intermediate", "left_index_proximal",
+    "left_middle_proximal", "left_ring_proximal", "left_pinky_proximal",
+    "left_index_intermediate", "left_middle_intermediate", "left_ring_intermediate",
+    "left_pinky_intermediate",
+)
+CASIA_RIGHT_REAL_JOINT_NAMES = tuple(
+    name.replace("left_", "right_", 1) for name in CASIA_LEFT_REAL_JOINT_NAMES
+)
+CASIA_LEFT_SIM_TO_REAL = np.asarray(
+    [CASIA_LEFT_JOINT_NAMES.index(name) for name in CASIA_LEFT_REAL_JOINT_NAMES],
+    dtype=np.intp,
+)
+CASIA_RIGHT_SIM_TO_REAL = np.asarray(
+    [CASIA_RIGHT_JOINT_NAMES.index(name) for name in CASIA_RIGHT_REAL_JOINT_NAMES],
+    dtype=np.intp,
+)
+
+
+def casia_sim_to_real(qpos: np.ndarray, side: str) -> np.ndarray:
+    """Map a 14-joint CASIA simulation target to its 10 hardware motors."""
+    qpos = np.asarray(qpos, dtype=np.float64).reshape(-1)
+    if qpos.shape != (CASIA_Num_Motors,):
+        raise ValueError(f"Expected {CASIA_Num_Motors} CASIA joints, got {qpos.shape}")
+    if side == "left":
+        mapping = CASIA_LEFT_SIM_TO_REAL
+    elif side == "right":
+        mapping = CASIA_RIGHT_SIM_TO_REAL
+    else:
+        raise ValueError(f"Unsupported CASIA hand side: {side}")
+    return np.abs(qpos[mapping])
+
+
+class CasiaHandController:
+    """Retarget and publish one CASIA command per VR frame.
+
+    This mirrors :class:`OmniHandController`: the caller receives precisely
+    the target published to the active backend, so an arm/hand recorder can
+    build one atomic frame without a second retargeting pass or a child-process
+    timing race.  ``Casia_Controller`` below remains the legacy standalone
+    multiprocessing interface.
+    """
+
+    def __init__(
+        self,
+        *,
+        zmq_left_port: int = 5560,
+        zmq_right_port: int = 5561,
+        zmq_left_real_port: int = 5555,
+        zmq_right_real_port: int = 5556,
+        bind_host: str = "*",
+        connect_delay: float = 0.5,
+        publish_sim: bool = True,
+        publish_real: bool = False,
+        enable_zmq: bool = True,
+    ) -> None:
+        if not publish_sim and not publish_real:
+            raise ValueError("At least one CASIA ZMQ output must be enabled")
+        self.publish_sim = publish_sim
+        self.hand_retargeting = HandRetargeting(HandType.CASIA_HAND)
+        self.context = zmq.Context() if enable_zmq else None
+        self.left_socket = self.right_socket = None
+        self.left_real_socket = self.right_real_socket = None
+        self.closed = False
+        self._target_hand_visualization: dict[str, dict] = {}
+        self.joint_names = (
+            CASIA_LEFT_JOINT_NAMES if publish_sim else CASIA_LEFT_REAL_JOINT_NAMES,
+            CASIA_RIGHT_JOINT_NAMES if publish_sim else CASIA_RIGHT_REAL_JOINT_NAMES,
+        )
+
+        try:
+            if enable_zmq and publish_sim:
+                self.left_socket = self._bind_publisher(bind_host, zmq_left_port)
+                self.right_socket = self._bind_publisher(bind_host, zmq_right_port)
+            if enable_zmq and publish_real:
+                self.left_real_socket = self._bind_publisher(bind_host, zmq_left_real_port)
+                self.right_real_socket = self._bind_publisher(bind_host, zmq_right_real_port)
+        except Exception:
+            self.close()
+            raise
+
+        if enable_zmq and connect_delay > 0.0:
+            time.sleep(connect_delay)
+
+    def _bind_publisher(self, bind_host: str, port: int):
+        socket = self.context.socket(zmq.PUB)
+        socket.setsockopt(zmq.LINGER, 0)
+        socket.setsockopt(zmq.SNDHWM, 1)
+        socket.setsockopt(zmq.CONFLATE, 1)
+        try:
+            socket.bind(f"tcp://{bind_host}:{port}")
+        except Exception:
+            socket.close()
+            raise
+        return socket
+
+    @staticmethod
+    def _valid_hand_data(hand_data: np.ndarray) -> bool:
+        return (
+            hand_data.shape == (25, 3)
+            and np.all(np.isfinite(hand_data))
+            and not np.all(hand_data == 0.0)
+        )
+
+    def _retarget(self, hand_data: np.ndarray, side: str) -> Optional[np.ndarray]:
+        hand_data = np.asarray(hand_data, dtype=np.float64)
+        if not self._valid_hand_data(hand_data):
+            self._target_hand_visualization.pop(side, None)
+            return None
+        if side == "left":
+            indices = self.hand_retargeting.left_indices
+            retargeting = self.hand_retargeting.left_retargeting
+            mapping = self.hand_retargeting.left_dex_retargeting_to_hardware
+        elif side == "right":
+            indices = self.hand_retargeting.right_indices
+            retargeting = self.hand_retargeting.right_retargeting
+            mapping = self.hand_retargeting.right_dex_retargeting_to_hardware
+        else:
+            raise ValueError(f"Unsupported CASIA hand side: {side}")
+
+        references = hand_data[indices[1, :]] - hand_data[indices[0, :]]
+        qpos = np.asarray(retargeting.retarget(references)[mapping], dtype=np.float64)
+        if qpos.shape != (CASIA_Num_Motors,) or not np.all(np.isfinite(qpos)):
+            logger_mp.warning("Ignoring invalid %s CASIA retarget output", side)
+            return None
+        self._target_hand_visualization[side] = self.hand_retargeting.target_hand_visualization(
+            hand_data, side
+        )
+        return qpos
+
+    @staticmethod
+    def _message(
+        qpos: np.ndarray,
+        joint_names: tuple[str, ...],
+        timestamp: float,
+        message_type: str,
+        target_hand: Optional[dict] = None,
+    ) -> dict:
+        message = {
+            "timestamp": timestamp,
+            "qpos": qpos.tolist(),
+            "joint_names": list(joint_names),
+            "type": message_type,
+        }
+        if target_hand is not None:
+            message["target_hand"] = target_hand
+        return message
+
+    def update(self, tele_data) -> tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+        """Publish and return the command for the configured backend."""
+        left_sim = self._retarget(np.asarray(tele_data.left_hand_pos), "left")
+        right_sim = self._retarget(np.asarray(tele_data.right_hand_pos), "right")
+        timestamp = time.time()
+
+        if self.left_socket is not None and left_sim is not None:
+            self.left_socket.send_json(self._message(
+                left_sim, CASIA_LEFT_JOINT_NAMES, timestamp, "sim2sim",
+                self._target_hand_visualization.get("left"),
+            ))
+        if self.right_socket is not None and right_sim is not None:
+            self.right_socket.send_json(self._message(
+                right_sim, CASIA_RIGHT_JOINT_NAMES, timestamp, "sim2sim",
+                self._target_hand_visualization.get("right"),
+            ))
+
+        left_real = None if left_sim is None else casia_sim_to_real(left_sim, "left")
+        right_real = None if right_sim is None else casia_sim_to_real(right_sim, "right")
+        if self.left_real_socket is not None and left_real is not None:
+            self.left_real_socket.send_json(self._message(
+                left_real, CASIA_LEFT_REAL_JOINT_NAMES, timestamp, "sim2real"
+            ))
+        if self.right_real_socket is not None and right_real is not None:
+            self.right_real_socket.send_json(self._message(
+                right_real, CASIA_RIGHT_REAL_JOINT_NAMES, timestamp, "sim2real"
+            ))
+
+        if self.publish_sim:
+            return left_sim, right_sim
+        return left_real, right_real
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        for socket in (
+            self.left_socket, self.right_socket,
+            self.left_real_socket, self.right_real_socket,
+        ):
+            if socket is not None:
+                socket.close()
+        if self.context is not None:
+            self.context.term()
 
 
 class Casia_Controller:

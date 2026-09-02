@@ -133,7 +133,23 @@ python teleop/robot_control/vr_arm_hand_teleop.py \
   --sync-frame-enable-zmq
 ```
 
-Or enable the same schema for sim2real:
+CASIA uses the same stream. In sim2sim the frame contains the 14 MuJoCo
+joints per hand; in sim2real it contains the 10 motor commands in the exact
+order sent to the CASIA SDK receiver:
+
+```sh
+# CASIA sim2sim
+python teleop/robot_control/vr_arm_hand_teleop.py \
+  --backend mujoco --robot g1_23 --hand casia \
+  --sync-frame-enable-zmq
+
+# CASIA sim2real
+python teleop/robot_control/vr_arm_hand_teleop.py \
+  --backend real --robot g1_23 --hand casia \
+  --sync-frame-enable-zmq
+```
+
+OmniHand can use the same schema for sim2real:
 
 ```sh
 python teleop/robot_control/vr_arm_hand_teleop.py \

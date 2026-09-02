@@ -124,6 +124,14 @@ class OmniHandController:
         if connect_delay > 0.0:
             time.sleep(connect_delay)
 
+    @property
+    def joint_names(self) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        """Joint layout of the simulation and hardware command stream."""
+        return (
+            tuple(self.hand_retargeting.left_omnihand_api_joint_names),
+            tuple(self.hand_retargeting.right_omnihand_api_joint_names),
+        )
+
     def _bind_publisher(self, bind_host: str, port: int):
         socket = self.context.socket(zmq.PUB)
         socket.setsockopt(zmq.LINGER, 0)

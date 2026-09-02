@@ -5,7 +5,6 @@ import signal
 import sys
 import time
 from dataclasses import dataclass
-from multiprocessing import Array
 from typing import Iterable, Optional
 
 import numpy as np
@@ -104,21 +103,8 @@ CASIA_LEFT_JOINT_NAMES = (
     "left_thumb_intermediate",
 )
 
-CASIA_RIGHT_JOINT_NAMES = (
-    "right_index_proximal",
-    "right_index_intermediate",
-    "right_index_distal",
-    "right_pinky_proximal",
-    "right_pinky_intermediate",
-    "right_pinky_distal",
-    "right_middle_proximal",
-    "right_middle_intermediate",
-    "right_middle_distal",
-    "right_ring_proximal",
-    "right_ring_intermediate",
-    "right_ring_distal",
-    "right_thumb_proximal",
-    "right_thumb_intermediate",
+CASIA_RIGHT_JOINT_NAMES = tuple(
+    name.replace("left_", "right_", 1) for name in CASIA_LEFT_JOINT_NAMES
 )
 
 OMNIHAND_LEFT_JOINT_NAMES = (
@@ -416,6 +402,22 @@ class MujocoArmHandController:
         if self.viewer is not None:
             self.viewer.sync()
 
+    def set_hand_q(
+        self,
+        hand_type: str,
+        left_q: Optional[np.ndarray],
+        right_q: Optional[np.ndarray],
+    ) -> None:
+        """Apply a controller's simulation target to its matching hand model."""
+        if hand_type == "casia":
+            if left_q is None or right_q is None:
+                return
+            self.set_casia_hand_q(left_q, right_q)
+        elif hand_type == "omnihand":
+            self.set_omnihand_q(left_q, right_q)
+        else:
+            raise ValueError(f"Unsupported dexterous hand type: {hand_type}")
+
     def _step_pd(self, q_target: np.ndarray, tauff_target: Optional[np.ndarray]) -> None:
         q = self.data.qpos[self.qpos_ids]
         dq = self.data.qvel[self.dof_ids]
@@ -506,70 +508,6 @@ class RealArmController:
     def close(self) -> None:
         self.socket.close()
         self.context.term()
-
-
-class CasiaHandBridge:
-    def __init__(
-        self,
-        frequency: float,
-        enable_zmq: bool,
-        zmq_left_port: int,
-        zmq_right_port: int,
-        zmq_left_real_port: int,
-        zmq_right_real_port: int,
-    ):
-        from teleop.robot_control.robot_hand_casia_v2 import Casia_Controller
-
-        self.left_hand_pos_array = Array("d", 75, lock=True)
-        self.right_hand_pos_array = Array("d", 75, lock=True)
-        self.controller = Casia_Controller(
-            self.left_hand_pos_array,
-            self.right_hand_pos_array,
-            fps=frequency,
-            enable_zmq=enable_zmq,
-            zmq_left_port=zmq_left_port,
-            zmq_right_port=zmq_right_port,
-            zmq_left_real_port=zmq_left_real_port,
-            zmq_right_real_port=zmq_right_real_port,
-        )
-
-    def update(self, tele_data) -> None:
-        with self.left_hand_pos_array.get_lock():
-            self.left_hand_pos_array[:] = tele_data.left_hand_pos.flatten()
-        with self.right_hand_pos_array.get_lock():
-            self.right_hand_pos_array[:] = tele_data.right_hand_pos.flatten()
-
-    def close(self) -> None:
-        pass
-
-
-class CasiaMujocoRetargeter:
-    def __init__(self):
-        from teleop.robot_control.hand_retargeting import HandRetargeting, HandType
-
-        self.hand_retargeting = HandRetargeting(HandType.CASIA_HAND)
-
-    def retarget(self, tele_data) -> Optional[tuple[np.ndarray, np.ndarray]]:
-        left_hand_data = np.asarray(tele_data.left_hand_pos, dtype=np.float64).reshape(25, 3)
-        right_hand_data = np.asarray(tele_data.right_hand_pos, dtype=np.float64).reshape(25, 3)
-        if np.all(left_hand_data == 0.0) or np.all(right_hand_data == 0.0):
-            return None
-
-        ref_left_value = (
-            left_hand_data[self.hand_retargeting.left_indices[1, :]]
-            - left_hand_data[self.hand_retargeting.left_indices[0, :]]
-        )
-        ref_right_value = (
-            right_hand_data[self.hand_retargeting.right_indices[1, :]]
-            - right_hand_data[self.hand_retargeting.right_indices[0, :]]
-        )
-        left_q = self.hand_retargeting.left_retargeting.retarget(ref_left_value)[
-            self.hand_retargeting.left_dex_retargeting_to_hardware
-        ]
-        right_q = self.hand_retargeting.right_retargeting.retarget(ref_right_value)[
-            self.hand_retargeting.right_dex_retargeting_to_hardware
-        ]
-        return left_q, right_q
 
 
 def default_mujoco_model(robot: str, hand: str) -> str:
@@ -666,8 +604,7 @@ def run(args: argparse.Namespace) -> None:
 
     tv_wrapper = None
     arm_ctrl = None
-    hand_bridge = None
-    mujoco_hand_retargeter = None
+    hand_controller = None
     sync_frame_publisher = None
     sync_frame_builder = None
     try:
@@ -692,8 +629,6 @@ def run(args: argparse.Namespace) -> None:
                 enable_casia_hand=args.hand == "casia",
                 enable_omnihand_hand=args.robot == "x2" and args.hand == "omnihand",
             )
-            if args.hand == "casia":
-                mujoco_hand_retargeter = CasiaMujocoRetargeter()
         else:
             arm_ctrl = RealArmController(
                 args.robot,
@@ -703,18 +638,21 @@ def run(args: argparse.Namespace) -> None:
             )
 
         if args.hand == "casia":
-            hand_bridge = CasiaHandBridge(
-                args.frequency,
-                args.casia_enable_zmq,
-                args.casia_zmq_left_port,
-                args.casia_zmq_right_port,
-                args.casia_zmq_left_real_port,
-                args.casia_zmq_right_real_port,
+            from teleop.robot_control.robot_hand_casia_v2 import CasiaHandController
+
+            hand_controller = CasiaHandController(
+                enable_zmq=args.casia_enable_zmq,
+                zmq_left_port=args.casia_zmq_left_port,
+                zmq_right_port=args.casia_zmq_right_port,
+                zmq_left_real_port=args.casia_zmq_left_real_port,
+                zmq_right_real_port=args.casia_zmq_right_real_port,
+                publish_sim=args.backend == "mujoco",
+                publish_real=args.backend == "real",
             )
         elif args.hand == "omnihand":
             from teleop.robot_control.robot_hand_omnihand import OmniHandController
 
-            hand_bridge = OmniHandController(
+            hand_controller = OmniHandController(
                 zmq_left_port=args.omnihand_zmq_left_port,
                 zmq_right_port=args.omnihand_zmq_right_port,
                 zmq_left_real_port=args.omnihand_zmq_left_real_port,
@@ -744,8 +682,8 @@ def run(args: argparse.Namespace) -> None:
     except Exception:
         if sync_frame_publisher is not None:
             sync_frame_publisher.close()
-        if hand_bridge is not None:
-            hand_bridge.close()
+        if hand_controller is not None:
+            hand_controller.close()
         if arm_ctrl is not None:
             arm_ctrl.close()
         if tv_wrapper is not None:
@@ -775,9 +713,9 @@ def run(args: argparse.Namespace) -> None:
                 time.time_ns() if sync_frame_publisher is not None else 0
             )
 
-            hand_bridge_q = None
-            if hand_bridge is not None:
-                hand_bridge_q = hand_bridge.update(tele_data)
+            hand_q = None
+            if hand_controller is not None:
+                hand_q = hand_controller.update(tele_data)
 
             state = arm_ctrl.get_state()
             sol_q, sol_tauff = arm_ik.solve_ik(
@@ -787,27 +725,17 @@ def run(args: argparse.Namespace) -> None:
                 state.dq,
             )
             arm_ctrl.send(sol_q, sol_tauff)
-            synchronized_hand_q = hand_bridge_q
-            if mujoco_hand_retargeter is not None:
-                hand_q = mujoco_hand_retargeter.retarget(tele_data)
-                if hand_q is not None:
-                    arm_ctrl.set_casia_hand_q(*hand_q)
-                    synchronized_hand_q = hand_q
-            elif (
+            synchronized_hand_q = hand_q
+            if (
                 args.backend == "mujoco"
-                and args.robot == "x2"
-                and args.hand == "omnihand"
-                and hand_bridge_q is not None
+                and args.hand in ("casia", "omnihand")
+                and hand_q is not None
             ):
-                arm_ctrl.set_omnihand_q(*hand_bridge_q)
+                arm_ctrl.set_hand_q(args.hand, *hand_q)
 
             if sync_frame_publisher is not None:
-                if args.hand == "omnihand":
-                    left_hand_joint_names = OMNIHAND_LEFT_JOINT_NAMES
-                    right_hand_joint_names = OMNIHAND_RIGHT_JOINT_NAMES
-                elif args.hand == "casia":
-                    left_hand_joint_names = CASIA_LEFT_JOINT_NAMES
-                    right_hand_joint_names = CASIA_RIGHT_JOINT_NAMES
+                if hand_controller is not None:
+                    left_hand_joint_names, right_hand_joint_names = hand_controller.joint_names
                 else:
                     left_hand_joint_names = ()
                     right_hand_joint_names = ()
@@ -865,8 +793,8 @@ def run(args: argparse.Namespace) -> None:
             arm_ctrl.go_home()
         except Exception as exc:
             LOGGER.warning("Failed to send arms home: %s", exc)
-        if hand_bridge is not None:
-            hand_bridge.close()
+        if hand_controller is not None:
+            hand_controller.close()
         if sync_frame_publisher is not None:
             sync_frame_publisher.close()
         if arm_ctrl is not None:
